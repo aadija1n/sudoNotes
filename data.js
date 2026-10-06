@@ -18,6 +18,17 @@
     return e;
   }
 
+  /* Where notes live: "github" (the published site, reading and writing the repo through the
+     GitHub API) or "local" (opened from your own computer, using the notes folder directly).
+     Override with ?source=local or ?source=github in the address, or `mode` in config.js. */
+  function source() {
+    const m = ((global.location && global.location.search) || "").match(/[?&]source=(local|github)\b/);
+    const forced = (m && m[1]) || cfg.mode;
+    if (forced === "local" || forced === "github") return forced;
+    if (cfg.owner && cfg.repo) return "github";
+    return ((global.location && global.location.hostname) || "").endsWith(".github.io") ? "github" : "local";
+  }
+
   /* ---------- repo detection ---------- */
   function detectRepo() {
     let owner = cfg.owner;
@@ -125,6 +136,7 @@
   function loadData() {
     if (!dataPromise) {
       dataPromise = (async () => {
+        if (source() === "local") return parseTree(await global.NotesLocal.listPaths(), root);
         const repo = detectRepo();
         if (!repo) throw fail("no-config", "Could not work out which GitHub repo to read from.");
         return parseTree(await fetchPaths(repo), root);
@@ -143,7 +155,12 @@
 
   /* Re-reads the whole tree right after a save, from the new tree's id, so the UI
      shows the change instantly without waiting for GitHub Pages to publish. */
-  async function refresh(treeSha) {
+  async function refresh(result) {
+    if (source() === "local") {
+      dataPromise = null;
+      return loadData();
+    }
+    const treeSha = result.treeSha;
     const repo = detectRepo();
     if (!repo) throw fail("no-config", "Could not work out which GitHub repo to read from.");
     const data = await api(`/repos/${repo.owner}/${repo.repo}/git/trees/${treeSha}?recursive=1`);
@@ -158,6 +175,7 @@
   }
 
   async function loadNote(path) {
+    if (source() === "local") return global.NotesLocal.readText(path);
     const url = path.split("/").map(encodeURIComponent).join("/");
 
     // In writing mode read through the API: it is always current, while the published
@@ -186,7 +204,7 @@
   }
 
   global.NotesData = {
-    loadData, resetData, loadNote, parseTree, detectRepo, refresh, root,
+    loadData, resetData, loadNote, parseTree, detectRepo, refresh, source, root,
     setTokenProvider(fn) { tokenProvider = fn; },
   };
 })(typeof window !== "undefined" ? window : globalThis);

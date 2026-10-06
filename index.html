@@ -6,10 +6,8 @@
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Notes</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="fonts.css" />
+  <link rel="stylesheet" href="lib/github-dark.min.css" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="subject.css" />
   <link rel="stylesheet" href="notes.css" />
@@ -19,17 +17,18 @@
   <main id="app" aria-live="polite"></main>
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
-  <!-- libraries (deferred scripts run in this order) -->
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.umd.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/marked-footnote@1.2.4/dist/index.umd.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <!-- libraries, bundled in /lib so everything works offline (deferred scripts run in this order) -->
+  <script defer src="lib/marked.umd.js"></script>
+  <script defer src="lib/marked-footnote.umd.js"></script>
+  <script defer src="lib/purify.min.js"></script>
+  <script defer src="lib/highlight.min.js"></script>
 
   <!-- app -->
   <script defer src="config.js"></script>
   <script defer src="data.js"></script>
   <script defer src="render.js"></script>
   <script defer src="auth.js"></script>
+  <script defer src="local.js"></script>
   <script defer src="github.js"></script>
   <script defer src="app.js"></script>
 </body>

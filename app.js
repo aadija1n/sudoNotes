@@ -46,6 +46,14 @@ function flatTopics(s) {
 }
 
 /* ---------- mode (R / W) ---------- */
+/* The R and W buttons: bottom of the index bar on a subject page, bottom-left corner on the home page. */
+function modeSwitch(extra = "") {
+  return `<div class="mode-switch ${extra}">
+    <button class="mode-btn" data-mode="r" aria-pressed="${mode === "r"}" title="Reading mode">R</button>
+    <button class="mode-btn" data-mode="w" aria-pressed="${mode === "w"}" title="Writing mode">W</button>
+  </div>`;
+}
+
 function setMode(next) {
   mode = next;
   document.body.classList.toggle("write", mode === "w");
@@ -106,10 +114,40 @@ function showSkeleton(kind) {
   }
 }
 
+/* Screens for the offline (local folder) mode. Returns null for any other error. */
+function localScreen(e) {
+  const notice = (title, text, buttons) => `<div class="notice"><h2>${title}</h2><p>${text}</p><div class="row">${buttons}</div></div>`;
+  const pick = `<button class="btn" data-local="pick">Choose another folder</button>`;
+  switch (e.code) {
+    case "unsupported":
+      return notice("This browser can't open folders", esc(e.message), `<button class="btn" data-retry="data">Try again</button>`);
+    case "need-folder":
+      return notice("Open your notes folder",
+        `This page is running from your computer. Choose the folder of your notes project, the one that contains <code>index.html</code> and the <code>notes</code> folder. Your browser asks once and remembers it.`,
+        `<button class="btn primary" data-local="pick">Choose folder</button>`);
+    case "need-permission":
+    case "denied":
+      return notice("Reconnect to your folder",
+        `${esc(e.message)} Your browser asks for this again each time you reopen the page.`,
+        `<button class="btn primary" data-local="reconnect">Continue</button>${pick}`);
+    case "no-notes":
+      return notice("No notes folder yet", `${esc(e.message)} Create one there, or choose a different folder.`,
+        `<button class="btn primary" data-local="create">Create "notes" folder</button>${pick}`);
+    default:
+      return null;
+  }
+}
+
 function renderError(e) {
   currentSubject = null;
   subj = null;
   document.body.classList.remove("subject-view");
+  const local = localScreen(e);
+  if (local) {
+    document.title = "Notes";
+    app.innerHTML = local;
+    return;
+  }
   const titles = {
     "no-config": "Repository not detected",
     "rate-limit": "GitHub limit reached",
@@ -169,7 +207,12 @@ function renderHome() {
     </header>
     <section class="tiles">${tiles}</section>
     ${DATA.subjects.length ? "" : empty}
+    ${NotesData.source() === "local"
+      ? `<p class="source-note">Working offline in the folder <b>${esc(NotesLocal.folderName())}</b>. <button class="link-btn" data-local="pick">Change folder</button></p>`
+      : ""}
+    ${modeSwitch("home-mode")}
   `;
+  setMode(mode);
 }
 
 function buildSubject(found) {
@@ -205,10 +248,7 @@ function buildSubject(found) {
           <button class="dots w-only" data-menu="subject" aria-label="Subject options">⋯</button>
         </div>
         <nav class="chapters" aria-label="Chapters">${chapters || `<p class="empty-note" style="padding:10px">No chapters yet.</p>`}</nav>
-        <div class="mode-switch">
-          <button class="mode-btn" data-mode="r" aria-pressed="true" title="Reading mode">R</button>
-          <button class="mode-btn" data-mode="w" aria-pressed="false" title="Writing mode">W</button>
-        </div>
+        ${modeSwitch()}
       </aside>
       <div class="backdrop" id="backdrop"></div>
       <section class="content">
@@ -408,6 +448,12 @@ async function requestWrite(btn) {
     record = await Auth.loadRecord();
   } catch (e) {
     const notSetup = e.code === "not-setup";
+    if (notSetup && NotesData.source() === "local") {
+      // working on your own computer with no auth.json in the folder: nothing to log in against
+      setMode("w");
+      toast("No admin login found in this folder, so writing mode is unlocked.", 4000);
+      return;
+    }
     openModal(`
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
         <h2 id="m-title">${notSetup ? "Admin login not set up" : "Can't open login"}</h2>
@@ -473,7 +519,9 @@ function showLogin(record) {
       checkTokenAccess(token);
     } catch (ex) {
       const wrong = ex.code === "bad-credentials";
-      err.textContent = wrong ? "Incorrect username or password." : "The admin file looks damaged. Generate it again with setup.html.";
+      err.textContent = wrong ? "Incorrect username or password."
+        : ex.code === "no-crypto" ? ex.message
+        : "The admin file looks damaged. Generate it again with setup.html.";
       form.classList.remove("shake");
       void form.offsetWidth; // restart the shake animation
       form.classList.add("shake");
@@ -555,6 +603,25 @@ function dialog({ title, sub, input, confirm, danger, onSubmit }) {
   }
 }
 
+/* Offline mode buttons (choose / reconnect / create). Must run straight from the click. */
+async function localAction(kind) {
+  try {
+    if (kind === "pick") await NotesLocal.pickFolder();
+    else if (kind === "reconnect") await NotesLocal.reconnect();
+    else if (kind === "create") await NotesLocal.createNotesFolder();
+  } catch (e) {
+    if (e.code === "aborted") return;
+    if (e.code === "no-notes") { renderError(e); return; }
+    toast(e.message || "Could not open that folder.", 5000);
+    return;
+  }
+  noteCache.clear();
+  NotesData.resetData();
+  DATA = null;
+  if (kind === "pick") history.replaceState(null, "", `${location.pathname}${location.search}#/`);
+  route();
+}
+
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function nameValidator(taken, current) {
@@ -571,7 +638,7 @@ const otherSubjects = (except) => DATA.subjects.map((s) => s.name).filter((n) =>
 async function applySave(result) {
   noteCache.clear();
   try {
-    DATA = await NotesData.refresh(result.treeSha);
+    DATA = await NotesData.refresh(result);
   } catch {
     DATA = null; // could not re-read now, so the next route() loads fresh data
     NotesData.resetData();
@@ -668,6 +735,9 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  const localBtn = t.closest("[data-local]");
+  if (localBtn) { localAction(localBtn.dataset.local); return; }
+
   const retry = t.closest("[data-retry]");
   if (retry) {
     if (retry.dataset.retry === "data") {
@@ -703,6 +773,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 NotesData.setTokenProvider(() => Auth.getToken());
+NotesWrite.setGuard(() => mode === "w"); // saving is only possible while writing mode is unlocked
+if (NotesData.source() === "local") Auth.setRecordLoader(() => NotesLocal.readRootFile("auth.json"));
 window.addEventListener("hashchange", route);
 window.addEventListener("resize", closeMenu);
 route();

@@ -3,7 +3,7 @@
    when a note actually contains one). */
 
 (function (global) {
-  const MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js";
+  const MERMAID_URL = "lib/mermaid.min.js"; // bundled, loaded only when a note has a diagram
   let ready = false;
   let mermaidPromise = null;
   let mermaidCount = 0;

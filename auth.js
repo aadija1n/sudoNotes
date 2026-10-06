@@ -13,6 +13,7 @@
   const td = new TextDecoder();
   const session = { token: null };
   let recordPromise = null;
+  let recordLoader = null;
 
   function fail(code, message) {
     const e = new Error(message);
@@ -38,6 +39,9 @@
   }
 
   async function derive(username, password, salt, iterations) {
+    if (!global.crypto || !global.crypto.subtle) {
+      throw fail("no-crypto", "This browser blocks encryption on this kind of page. Open the app in Chrome, Edge or Brave, or from a GitHub Pages address.");
+    }
     const base = await crypto.subtle.importKey("raw", te.encode(`${normUser(username)}\n${password}`), "PBKDF2", false, ["deriveBits"]);
     const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, base, 512);
     return {
@@ -66,7 +70,8 @@
     let derived;
     try {
       derived = await derive(username, password, unb64(record.salt), record.iterations);
-    } catch {
+    } catch (e) {
+      if (e && e.code === "no-crypto") throw e;
       throw fail("bad-record", "The admin file is not valid.");
     }
     if (!sameString(derived.verifier, record.verifier)) throw fail("bad-credentials", "Incorrect username or password.");
@@ -83,6 +88,18 @@
   function loadRecord() {
     if (!recordPromise) {
       recordPromise = (async () => {
+        if (recordLoader) {
+          // local mode: the app reads auth.json from your project folder and hands us the text
+          const text = await recordLoader();
+          if (text == null) throw fail("not-setup", "Admin login has not been set up yet.");
+          try {
+            const json = JSON.parse(text);
+            if (!validRecord(json)) throw new Error("invalid");
+            return json;
+          } catch {
+            throw fail("bad-record", "The admin file is not valid. Generate it again with setup.html.");
+          }
+        }
         let res;
         try {
           res = await fetch("auth.json", { cache: "no-cache" });
@@ -104,22 +121,30 @@
     return recordPromise;
   }
 
-  /* Advisory check that the token can see the repo and is allowed to write. */
+  /* Checks that the token can really write. It creates one tiny unreferenced blob, the same kind
+     of call a save makes first, so a read-only token is caught here instead of at the first save.
+     (Reading the repo's "permissions" field is not reliable for fine-grained tokens.) */
   async function checkWriteAccess(token, repo) {
     let res;
     try {
-      res = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
-        headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}` },
+      res = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/git/blobs`, {
+        method: "POST",
+        headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "write-check", encoding: "utf-8" }),
       });
     } catch {
       return { ok: null, reason: "Could not reach GitHub to check the token." };
     }
+    if (res.status === 201 || res.status === 200) return { ok: true };
+    let detail = "";
+    try { detail = (await res.json()).message || ""; } catch { /* no body */ }
     if (res.status === 401) return { ok: false, reason: "GitHub rejected the token. It may have expired." };
-    if (res.status === 404) return { ok: false, reason: "The token cannot see this repository." };
-    if (!res.ok) return { ok: null, reason: `GitHub returned ${res.status}.` };
-    const info = await res.json();
-    if (info.permissions && info.permissions.push === false) return { ok: false, reason: "The token is read-only. It needs Contents: Read and write." };
-    return { ok: true };
+    if (res.status === 404) return { ok: false, reason: "The token cannot see this repository. Check the repository name and that the token includes it." };
+    if (res.status === 403) {
+      return { ok: false, reason: `The token cannot write to this repository. In GitHub edit the token and set Repository permissions → Contents to "Read and write".${detail ? ` (GitHub said: ${detail})` : ""}` };
+    }
+    if (res.status === 409) return { ok: true }; // empty repository: writing still works
+    return { ok: null, reason: `GitHub returned ${res.status}.` };
   }
 
   global.Auth = {
@@ -127,6 +152,7 @@
     unlock,
     loadRecord,
     checkWriteAccess,
+    setRecordLoader(fn) { recordLoader = fn; recordPromise = null; },
     getToken: () => session.token,
     isUnlocked: () => !!session.token,
     lock: () => { session.token = null; },

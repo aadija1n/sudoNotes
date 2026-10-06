@@ -24,7 +24,7 @@
   const refUpdatePath = (branch) => `/git/refs/heads/${branch.split("/").map(encodeURIComponent).join("/")}`;
 
   /* One authenticated call to the repo's API. Errors become short, human messages. */
-  async function gh(method, path, body) {
+  async function gh(method, path, body, step = "complete the request") {
     const token = global.Auth.getToken();
     if (!token) throw fail("locked", "Writing mode is locked. Click W and log in again.");
     const r = repo();
@@ -47,34 +47,45 @@
     let detail = "";
     try { detail = (await res.json()).message || ""; } catch { /* no body */ }
     if (res.status === 401) throw fail("auth", "GitHub rejected the saved token. It may have expired. Create a new one with setup.html.", 401);
-    if (res.status === 403) throw fail("forbidden", "GitHub refused the change. The token needs Contents: Read and write on this repository.", 403);
+    if (res.status === 403) {
+      if (/rate limit/i.test(detail)) throw fail("rate-limit", "GitHub is limiting requests right now. Wait a minute and try again.", 403);
+      if (/saml/i.test(detail)) throw fail("forbidden", "Your organization requires this token to be authorized for it (SAML). Authorize it in the token's settings on GitHub.", 403);
+      if (/not accessible|permission/i.test(detail)) {
+        throw fail("forbidden", `GitHub says this token is not allowed to ${step}. On GitHub open Settings → Developer settings → Fine-grained tokens, edit the token, select this repository and set Repository permissions → Contents to "Read and write". (GitHub said: ${detail})`, 403);
+      }
+      throw fail("forbidden", `GitHub refused to ${step}${detail ? `: ${detail}` : "."}`, 403);
+    }
     if (res.status === 404) throw fail("not-found", "GitHub could not find the repository or branch. Check that the token has access to this repo.", 404);
     throw fail("http", `GitHub reported a problem${detail ? `: ${detail}` : ""} (${res.status}). Nothing was changed.`, res.status);
   }
 
   async function getBranch() {
-    if (!branchCache) branchCache = cfg.branch || (await gh("GET", "")).default_branch;
+    if (!branchCache) branchCache = cfg.branch || (await gh("GET", "", null, "read the repository")).default_branch;
     return branchCache;
   }
 
   /* The latest commit and the full file list, read fresh so we never edit stale state. */
   async function getHead() {
     const branch = await getBranch();
-    const ref = await gh("GET", refPath(branch));
-    const commit = await gh("GET", `/git/commits/${ref.object.sha}`);
-    const tree = await gh("GET", `/git/trees/${commit.tree.sha}?recursive=1`);
+    const ref = await gh("GET", refPath(branch), null, "read the branch");
+    const commit = await gh("GET", `/git/commits/${ref.object.sha}`, null, "read the latest commit");
+    const tree = await gh("GET", `/git/trees/${commit.tree.sha}?recursive=1`, null, "read the file list");
     if (tree.truncated) throw fail("too-big", "This repository is too large to change from the browser.");
     return { branch, commitSha: ref.object.sha, treeSha: commit.tree.sha, entries: tree.tree };
   }
 
   /* Reads the repo, lets `plan` decide the changes, then writes them as a single commit. */
+  let guard = null; // set by the app: returns false while writing mode is locked
+
   async function commit(message, plan) {
+    if (guard && !guard()) throw fail("locked", "Writing mode is locked. Click W and log in again.");
+    if (global.NotesData.source() === "local") return global.NotesLocal.commit(message, plan);
     const head = await getHead();
     const changes = plan(head.entries);
-    const tree = await gh("POST", "/git/trees", { base_tree: head.treeSha, tree: changes });
-    const made = await gh("POST", "/git/commits", { message, tree: tree.sha, parents: [head.commitSha] });
+    const tree = await gh("POST", "/git/trees", { base_tree: head.treeSha, tree: changes }, "prepare the change");
+    const made = await gh("POST", "/git/commits", { message, tree: tree.sha, parents: [head.commitSha] }, "create the commit");
     try {
-      await gh("PATCH", refUpdatePath(head.branch), { sha: made.sha });
+      await gh("PATCH", refUpdatePath(head.branch), { sha: made.sha }, "update the branch");
     } catch (e) {
       if (e.status === 422 || e.status === 409) throw fail("conflict", "The repository changed while saving. Nothing was lost. Please try again.");
       throw e;
@@ -144,5 +155,8 @@
     });
   }
 
-  global.NotesWrite = { cleanName, validateName, addSubject, renameSubject, deleteSubject };
+  global.NotesWrite = {
+    cleanName, validateName, addSubject, renameSubject, deleteSubject,
+    setGuard(fn) { guard = fn; },
+  };
 })(window);
