@@ -8,6 +8,14 @@
 }
 .btn.primary:hover { background: #a3c4ff; }
 .btn:disabled { opacity: 0.6; cursor: default; }
+.btn.danger {
+  background: #e5484d;
+  border-color: #e5484d;
+  color: #fff;
+  font-weight: 600;
+}
+.btn.danger:hover { background: #f06267; }
+.modal-sub b { color: var(--text); font-weight: 600; }
 
 /* ---------- Modal ---------- */
 .modal-backdrop {

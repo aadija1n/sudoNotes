@@ -34,13 +34,21 @@
   }
 
   /* ---------- GitHub API ---------- */
-  async function api(path) {
+  /* In writing mode the admin token is attached to reads too (higher rate limit,
+     always the latest data). If GitHub rejects the token we silently retry without it. */
+  let tokenProvider = null;
+
+  async function api(path, allowAuth = true) {
+    const token = allowAuth && tokenProvider ? tokenProvider() : null;
     let res;
     try {
-      res = await fetch(`https://api.github.com${path}`, { headers: { Accept: "application/vnd.github+json" } });
+      res = await fetch(`https://api.github.com${path}`, {
+        headers: { Accept: "application/vnd.github+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
     } catch {
       throw fail("network", "Could not reach GitHub. Check your internet connection and try again.");
     }
+    if (token && res.status === 401) return api(path, false);
     if ((res.status === 403 || res.status === 429) && res.headers.get("x-ratelimit-remaining") === "0") {
       const reset = Number(res.headers.get("x-ratelimit-reset")) * 1000;
       const mins = reset ? Math.max(1, Math.ceil((reset - Date.now()) / 60000)) : null;
@@ -133,8 +141,39 @@
     } catch { /* ignore */ }
   }
 
+  /* Re-reads the whole tree right after a save, from the new tree's id, so the UI
+     shows the change instantly without waiting for GitHub Pages to publish. */
+  async function refresh(treeSha) {
+    const repo = detectRepo();
+    if (!repo) throw fail("no-config", "Could not work out which GitHub repo to read from.");
+    const data = await api(`/repos/${repo.owner}/${repo.repo}/git/trees/${treeSha}?recursive=1`);
+    const prefix = `${root}/`;
+    const paths = (data.tree || []).filter((n) => n.type === "blob" && n.path.startsWith(prefix)).map((n) => n.path);
+    try {
+      Object.keys(sessionStorage).filter((k) => k.startsWith("notes:tree:")).forEach((k) => sessionStorage.removeItem(k));
+    } catch { /* ignore */ }
+    const parsed = parseTree(paths, root);
+    dataPromise = Promise.resolve(parsed);
+    return parsed;
+  }
+
   async function loadNote(path) {
     const url = path.split("/").map(encodeURIComponent).join("/");
+
+    // In writing mode read through the API: it is always current, while the published
+    // site can lag a minute or two behind a save.
+    const token = tokenProvider ? tokenProvider() : null;
+    const repo = token ? detectRepo() : null;
+    if (token && repo) {
+      try {
+        const ref = cfg.branch ? `?ref=${encodeURIComponent(cfg.branch)}` : "";
+        const r = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${url}${ref}`, {
+          headers: { Accept: "application/vnd.github.raw+json", Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) return r.text();
+      } catch { /* fall back to the published site */ }
+    }
+
     let res;
     try {
       res = await fetch(url, { cache: "no-cache" });
@@ -146,5 +185,8 @@
     return res.text();
   }
 
-  global.NotesData = { loadData, resetData, loadNote, parseTree, detectRepo, root };
+  global.NotesData = {
+    loadData, resetData, loadNote, parseTree, detectRepo, refresh, root,
+    setTokenProvider(fn) { tokenProvider = fn; },
+  };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -3,7 +3,7 @@
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
-  subject: [["Insert new chapter", 6], ["Rename subject", 5], ["Delete subject", 5, "danger"]],
+  subject: [["Insert new chapter", 6], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
   chapter: [["Add topic", 8], ["Rename chapter", 6], ["Change number", 6], ["Move up", 7], ["Move down", 7], ["Delete chapter", 6, "danger"]],
   topic: [["Rename", 8], ["Move up", 8], ["Move down", 8], ["Delete", 8, "danger"]],
 };
@@ -70,7 +70,7 @@ function openMenu(btn, type) {
   menuEl.dataset.owner = btn.dataset.uid;
   menuEl.setAttribute("role", "menu");
   menuEl.innerHTML = MENUS[type]
-    .map(([label, phase, cls]) => `<button role="menuitem" class="${cls || ""}" data-phase="${phase}" data-label="${esc(label)}">${esc(label)}</button>`)
+    .map(([label, phase, cls, action]) => `<button role="menuitem" class="${cls || ""}" data-phase="${phase}" data-action="${action || ""}" data-label="${esc(label)}">${esc(label)}</button>`)
     .join("");
   document.body.appendChild(menuEl);
 
@@ -493,14 +493,164 @@ async function checkTokenAccess(token) {
   if (result.ok === false) toast(`Heads up: ${result.reason}`, 6000);
 }
 
+/* ---------- writing: dialogs and subject actions (Phase 5) ---------- */
+
+/* One reusable dialog: optional text input with live validation, a confirm button that
+   shows "Saving…" while onSubmit runs, and the error (if any) shown inline. */
+function dialog({ title, sub, input, confirm, danger, onSubmit }) {
+  const wrap = openModal(`
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
+      <h2 id="m-title">${esc(title)}</h2>
+      <p class="modal-sub">${sub}</p>
+      ${input ? `<label class="field"><span>${esc(input.label)}</span>
+        <input name="value" value="${esc(input.value || "")}" placeholder="${esc(input.placeholder || "")}" maxlength="120" spellcheck="false" /></label>` : ""}
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn ${danger ? "danger" : "primary"}">${esc(confirm)}</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const field = form.elements.value || null;
+  const err = form.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  const cancel = form.querySelector("[data-modal-close]");
+  let busy = false;
+
+  const check = () => {
+    const msg = input.validate(field.value); // "" ok, " " = silently not ready, otherwise a message
+    err.textContent = msg.trim();
+    submit.disabled = !!msg;
+  };
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy || submit.disabled) return;
+    busy = true;
+    const value = field ? NotesWrite.cleanName(field.value) : undefined;
+    err.textContent = "";
+    [field, submit, cancel].forEach((el) => { if (el) el.disabled = true; });
+    submit.textContent = "Saving…";
+    try {
+      await onSubmit(value);
+      closeModal();
+    } catch (ex) {
+      err.textContent = ex.message || "Something went wrong. Nothing was changed.";
+      [field, cancel].forEach((el) => { if (el) el.disabled = false; });
+      submit.disabled = false;
+      submit.textContent = confirm;
+      busy = false;
+      if (field) field.focus();
+    }
+  });
+
+  if (field) {
+    field.addEventListener("input", check);
+    field.focus();
+    field.select();
+    check();
+  } else {
+    cancel.focus(); // for confirmations the safe choice has focus
+  }
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function nameValidator(taken, current) {
+  return (value) => {
+    const n = NotesWrite.cleanName(value);
+    if (!n || n === current) return " ";
+    return NotesWrite.validateName(n, taken);
+  };
+}
+
+const otherSubjects = (except) => DATA.subjects.map((s) => s.name).filter((n) => n !== except).map((n) => n.toLowerCase());
+
+/* After a save: show the new state immediately (no waiting for GitHub Pages). */
+async function applySave(result) {
+  noteCache.clear();
+  try {
+    DATA = await NotesData.refresh(result.treeSha);
+  } catch {
+    DATA = null; // could not re-read now, so the next route() loads fresh data
+    NotesData.resetData();
+  }
+}
+
+function forgetSubjectState(name, moveTo) {
+  const topic = store.get(lastTopicKey(name));
+  try {
+    localStorage.removeItem(lastTopicKey(name));
+    if (store.get(LAST_SUBJECT) === name) moveTo ? localStorage.setItem(LAST_SUBJECT, moveTo) : localStorage.removeItem(LAST_SUBJECT);
+  } catch { /* storage unavailable */ }
+  if (moveTo && topic) store.set(lastTopicKey(moveTo), topic);
+}
+
+function addSubjectDialog() {
+  dialog({
+    title: "New subject",
+    sub: "Give the subject a name. You can add chapters to it next.",
+    input: { label: "Subject name", placeholder: "e.g. Operating Systems", validate: nameValidator(otherSubjects()) },
+    confirm: "Create subject",
+    onSubmit: async (name) => {
+      await applySave(await NotesWrite.addSubject(name));
+      toast("Subject created");
+      location.hash = `#/subject/${encodeURIComponent(name)}`;
+    },
+  });
+}
+
+function renameSubjectDialog() {
+  const old = subj.name;
+  const topicId = currentTopicId;
+  dialog({
+    title: "Rename subject",
+    sub: `Everything inside <b>${esc(old)}</b> moves to the new name in a single save.`,
+    input: { label: "Subject name", value: old, validate: nameValidator(otherSubjects(old), old) },
+    confirm: "Rename",
+    onSubmit: async (name) => {
+      await applySave(await NotesWrite.renameSubject(old, name));
+      forgetSubjectState(old, name);
+      toast("Subject renamed");
+      location.hash = `#/subject/${encodeURIComponent(name)}${topicId ? `/${topicId}` : ""}`;
+    },
+  });
+}
+
+function deleteSubjectDialog() {
+  const name = subj.name;
+  const chapters = subj.chapters.length;
+  const notes = flatTopics(subj).length;
+  dialog({
+    title: "Delete this subject?",
+    sub: `<b>${esc(name)}</b> will be removed along with ${plural(chapters, "chapter")} and ${plural(notes, "note")}. You can still recover it from your repo's commit history.`,
+    confirm: "Delete subject",
+    danger: true,
+    onSubmit: async () => {
+      await applySave(await NotesWrite.deleteSubject(name));
+      forgetSubjectState(name, null);
+      toast("Subject deleted");
+      location.hash = "#/";
+    },
+  });
+}
+
+const ACTIONS = {
+  "subject:rename": renameSubjectDialog,
+  "subject:delete": deleteSubjectDialog,
+};
+
 /* ---------- events (delegated) ---------- */
 document.addEventListener("click", (e) => {
   const t = e.target;
 
   const menuItem = t.closest(".menu button");
   if (menuItem) {
-    toast(`"${menuItem.dataset.label}" arrives in Phase ${menuItem.dataset.phase}`);
+    const action = ACTIONS[menuItem.dataset.action];
     closeMenu();
+    if (action) action();
+    else toast(`"${menuItem.dataset.label}" arrives in Phase ${menuItem.dataset.phase}`);
     return;
   }
 
@@ -544,7 +694,7 @@ document.addEventListener("click", (e) => {
 
   if (t.closest("#open-index")) { setDrawer(true); return; }
   if (t.closest("#backdrop")) { setDrawer(false); return; }
-  if (t.closest("#add-subject")) { toast("Adding subjects arrives in Phase 5"); return; }
+  if (t.closest("#add-subject")) { addSubjectDialog(); return; }
   if (t.closest("#add-content")) { toast("The insert menu arrives in Phase 9"); return; }
 });
 
@@ -552,6 +702,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeMenu(); closeModal(); setDrawer(false); }
 });
 
+NotesData.setTokenProvider(() => Auth.getToken());
 window.addEventListener("hashchange", route);
 window.addEventListener("resize", closeMenu);
 route();
