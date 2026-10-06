@@ -1,20 +1,5 @@
-/* Phase 2: subject page layout, chapter accordion, R/W buttons (UI only).
-   All data below is sample data; real data loads from the repo in Phase 3. */
-
-const SAMPLE_SUBJECTS = [
-  "Computer Networks",
-  "Python",
-  "C++",
-  "Database management Systems",
-  "Git & Github",
-  "General Aptitude",
-];
-
-const SAMPLE_CHAPTERS = [
-  { num: 0, name: "Syllabus", topics: ["Course overview", "Reference books"] },
-  { num: 1, name: "Introduction", topics: ["introduction", "xyztpoic"] },
-  { num: 2, name: "Basics", topics: ["sample topic", "another topic"] },
-];
+/* Phase 3: real data from your GitHub repo, rendered markdown.
+   Editing menus are still previews (they show which phase makes them work). */
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
@@ -28,7 +13,13 @@ const LAST_SUBJECT = "notes:lastSubject";
 const lastTopicKey = (s) => `notes:lastTopic:${s}`;
 
 let mode = "r"; // always starts in read mode
-let currentSubject = null;
+let DATA = null; // { subjects: [...] } loaded from the repo
+let subj = null; // the subject object being viewed
+let currentSubject = null; // its name
+let currentTopicId = null;
+let routeToken = 0;
+let noteToken = 0;
+const noteCache = new Map();
 
 /* ---------- helpers ---------- */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -50,14 +41,8 @@ function toast(message) {
   }, 2600);
 }
 
-/* flat list of topics: id "1.2", label "1.2 xyztpoic", chapter info */
-function flatTopics() {
-  const out = [];
-  SAMPLE_CHAPTERS.forEach((ch) => ch.topics.forEach((t, i) => {
-    const id = `${ch.num}.${i + 1}`;
-    out.push({ id, label: `${id} ${t}`, chapter: ch });
-  }));
-  return out;
+function flatTopics(s) {
+  return s.chapters.flatMap((ch) => ch.topics.map((t) => ({ ...t, label: `${t.id} ${t.title}`, chapter: ch })));
 }
 
 /* ---------- mode (R / W) ---------- */
@@ -95,34 +80,106 @@ function openMenu(btn, type) {
   menuEl.style.top = `${r.bottom + h + 12 > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
 }
 
+/* ---------- loading and error views ---------- */
+function showSkeleton(kind) {
+  if (kind === "subject") {
+    document.body.classList.add("subject-view");
+    app.innerHTML = `
+      <div class="shell">
+        <aside class="index"><div style="padding:14px">
+          <span class="sk sk-head"></span>
+          ${'<span class="sk sk-ch"></span>'.repeat(4)}
+        </div></aside>
+        <section class="content"><div class="note-scroll"><div class="note">
+          <span class="sk sk-title"></span>
+          <span class="sk sk-line" style="width:92%"></span>
+          <span class="sk sk-line" style="width:84%"></span>
+          <span class="sk sk-line" style="width:88%"></span>
+        </div></div></section>
+      </div>`;
+  } else {
+    document.body.classList.remove("subject-view");
+    app.innerHTML = `
+      <header class="page-head"><h1>Subject List</h1></header>
+      <div class="sk-tiles">${[140, 90, 70, 210, 120, 150].map((w) => `<span class="sk" style="width:${w}px"></span>`).join("")}</div>`;
+  }
+}
+
+function renderError(e) {
+  currentSubject = null;
+  subj = null;
+  document.body.classList.remove("subject-view");
+  const titles = {
+    "no-config": "Repository not detected",
+    "rate-limit": "GitHub limit reached",
+    "not-found": "Repository not found",
+    network: "Can't connect",
+    libs: "Couldn't load the page",
+  };
+  const extra = e.code === "no-config"
+    ? `<p>Open this site from its GitHub Pages address, or set <code>owner</code> and <code>repo</code> in <code>config.js</code>.</p>`
+    : "";
+  document.title = "Notes";
+  app.innerHTML = `
+    <div class="notice">
+      <h2>${esc(titles[e.code] || "Something went wrong")}</h2>
+      <p>${esc(e.message)}</p>
+      ${extra}
+      <div class="row"><button class="btn" data-retry="data">Try again</button></div>
+    </div>`;
+}
+
+function renderNotFound(name) {
+  currentSubject = null;
+  subj = null;
+  document.body.classList.remove("subject-view");
+  document.title = "Notes";
+  app.innerHTML = `
+    <div class="notice">
+      <h2>Subject not found</h2>
+      <p>There is no subject called "${esc(name)}". It may have been renamed or removed.</p>
+      <div class="row"><a class="btn" href="#/">Back to all subjects</a></div>
+    </div>`;
+}
+
 /* ---------- views ---------- */
 function renderHome() {
   currentSubject = null;
+  subj = null;
   document.body.classList.remove("subject-view");
   document.title = "Notes";
   const last = store.get(LAST_SUBJECT);
 
-  const tiles = SAMPLE_SUBJECTS.map((name, i) => {
-    const cls = name === last ? "tile last-opened" : "tile";
-    return `<a class="${cls}" style="animation-delay:${i * 50}ms" href="#/subject/${encodeURIComponent(name)}">${esc(name)}</a>`;
+  const tiles = DATA.subjects.map((s, i) => {
+    const cls = s.name === last ? "tile last-opened" : "tile";
+    return `<a class="${cls}" style="animation-delay:${Math.min(i, 12) * 50}ms" href="#/subject/${encodeURIComponent(s.name)}">${esc(s.name)}</a>`;
   }).join("");
+
+  const empty = `
+    <div class="notice-inline">
+      <p>No subjects found yet.</p>
+      <p>Add a note to your repo, for example <code>${esc(NotesData.root)}/Python/Chapter 01 - Basics/1.1 Variables.md</code>, and it will appear here.</p>
+    </div>`;
 
   app.innerHTML = `
     <header class="page-head">
       <h1>Subject List</h1>
       <button class="icon-btn w-only" id="add-subject" aria-label="Add subject" title="Add subject">+</button>
     </header>
-    <section class="tiles">${tiles || `<p class="empty">No subjects yet.</p>`}</section>
+    <section class="tiles">${tiles}</section>
+    ${DATA.subjects.length ? "" : empty}
   `;
 }
 
-function buildSubject(name) {
-  currentSubject = name;
-  store.set(LAST_SUBJECT, name);
+function buildSubject(found) {
+  subj = found;
+  currentSubject = found.name;
+  store.set(LAST_SUBJECT, found.name);
   document.body.classList.add("subject-view");
+  const name = found.name;
   const enc = encodeURIComponent(name);
 
-  const chapters = SAMPLE_CHAPTERS.map((ch) => `
+  const chapters = found.chapters.map((ch) => `
     <div class="chapter" data-ch="${ch.num}">
       <div class="chapter-row">
         <button class="chapter-btn" aria-expanded="false">
@@ -131,11 +188,10 @@ function buildSubject(name) {
         <button class="dots w-only" data-menu="chapter" aria-label="Chapter options">⋯</button>
       </div>
       <div class="topics"><div class="topics-inner"><ul>
-        ${ch.topics.map((t, i) => {
-          const id = `${ch.num}.${i + 1}`;
-          return `<li><a class="topic" data-id="${id}" href="#/subject/${enc}/${id}">${id} ${esc(t)}</a>
-            <button class="dots w-only" data-menu="topic" aria-label="Topic options">⋯</button></li>`;
-        }).join("")}
+        ${ch.topics.length ? ch.topics.map((t) => `
+          <li><a class="topic" data-id="${t.id}" href="#/subject/${enc}/${t.id}">${t.id} ${esc(t.title)}</a>
+            <button class="dots w-only" data-menu="topic" aria-label="Topic options">⋯</button></li>`).join("")
+          : `<li class="empty-note" style="padding:6px 10px;font-size:13px">No topics yet</li>`}
       </ul></div></div>
     </div>`).join("");
 
@@ -147,7 +203,7 @@ function buildSubject(name) {
           <span class="subject-name" title="${esc(name)}">${esc(name)}</span>
           <button class="dots w-only" data-menu="subject" aria-label="Subject options">⋯</button>
         </div>
-        <nav class="chapters" aria-label="Chapters">${chapters}</nav>
+        <nav class="chapters" aria-label="Chapters">${chapters || `<p class="empty-note" style="padding:10px">No chapters yet.</p>`}</nav>
         <div class="mode-switch">
           <button class="mode-btn" data-mode="r" aria-pressed="true" title="Reading mode">R</button>
           <button class="mode-btn" data-mode="w" aria-pressed="false" title="Writing mode">W</button>
@@ -178,30 +234,44 @@ function toggleChapter(chapterEl) {
   if (willOpen) setChapterOpen(chapterEl, true);
 }
 
-function showTopic(id) {
+/* Drops the note's own first heading when it just repeats the topic title. */
+function dropDuplicateTitle(el, topic) {
+  const first = [...el.children].find((c) => !c.classList.contains("toc"));
+  if (!first || first.tagName !== "H1") return;
+  const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  const text = norm(first.textContent);
+  if (text === norm(topic.title) || text === norm(topic.label)) first.remove();
+}
+
+async function showTopic(id) {
+  const token = ++noteToken;
   const host = document.getElementById("note-scroll");
   document.querySelectorAll(".topic.active").forEach((a) => a.classList.remove("active"));
-  const list = flatTopics();
-  const idx = list.findIndex((t) => t.id === id);
-  const enc = encodeURIComponent(currentSubject);
+  const list = flatTopics(subj);
+  const idx = id ? list.findIndex((t) => t.id === id) : -1;
+  const enc = encodeURIComponent(subj.name);
+  currentTopicId = idx === -1 ? null : id;
 
   if (idx === -1) {
-    const last = store.get(lastTopicKey(currentSubject));
+    const last = store.get(lastTopicKey(subj.name));
     const lastItem = list.find((t) => t.id === last);
-    document.title = `${currentSubject} · Notes`;
+    document.title = `${subj.name} · Notes`;
+    const message = !list.length
+      ? "This subject has no notes yet."
+      : id ? "That topic could not be found. It may have been renamed or moved." : "Pick a topic from the index to start reading.";
     host.innerHTML = `
       <div class="empty-state"><div>
-        <h2>${esc(currentSubject)}</h2>
-        <p>Pick a topic from the index to start reading.</p>
+        <h2>${esc(subj.name)}</h2>
+        <p>${message}</p>
         ${lastItem ? `<a class="continue-btn" href="#/subject/${enc}/${lastItem.id}">Continue: ${esc(lastItem.label)}</a>` : ""}
       </div></div>`;
     return;
   }
 
   const t = list[idx];
-  store.set(lastTopicKey(currentSubject), id);
+  store.set(lastTopicKey(subj.name), id);
 
-  const link = document.querySelector(`.topic[data-id="${id}"]`);
+  const link = document.querySelector(`.topic[data-id="${CSS.escape(id)}"]`);
   if (link) {
     link.classList.add("active");
     const chapterEl = link.closest(".chapter");
@@ -212,18 +282,47 @@ function showTopic(id) {
 
   const prev = list[idx - 1];
   const next = list[idx + 1];
-  document.title = `${t.label} · ${currentSubject}`;
+  document.title = `${t.label} · ${subj.name}`;
   host.scrollTop = 0;
   host.innerHTML = `
     <article class="note">
-      <div class="crumbs">${esc(currentSubject)} / Chapter ${pad(t.chapter.num)} - ${esc(t.chapter.name)}</div>
+      <div class="crumbs">${esc(subj.name)} / Chapter ${pad(t.chapter.num)} - ${esc(t.chapter.name)}</div>
       <h1>${esc(t.label)}</h1>
-      <div class="note-placeholder">Notes will render here. Markdown loading from your repo arrives in Phase 3.</div>
+      <div id="note-body">
+        <span class="sk sk-line" style="width:92%"></span>
+        <span class="sk sk-line" style="width:84%"></span>
+        <span class="sk sk-line" style="width:88%"></span>
+        <span class="sk sk-line" style="width:60%"></span>
+      </div>
       <div class="note-nav">
         ${prev ? `<a class="prev" href="#/subject/${enc}/${prev.id}"><small>← Previous</small>${esc(prev.label)}</a>` : "<span></span>"}
         ${next ? `<a class="next" href="#/subject/${enc}/${next.id}"><small>Next →</small>${esc(next.label)}</a>` : ""}
       </div>
     </article>`;
+
+  const body = host.querySelector("#note-body");
+  try {
+    let text = noteCache.get(t.path);
+    if (text === undefined) {
+      text = await NotesData.loadNote(t.path);
+      noteCache.set(t.path, text);
+    }
+    if (token !== noteToken) return; // user already moved on
+    if (!text.trim()) {
+      body.innerHTML = `<p class="empty-note">This note is empty.</p>`;
+    } else {
+      const el = NotesRender.toElement(text, t.path.slice(0, t.path.lastIndexOf("/")));
+      dropDuplicateTitle(el, t);
+      body.replaceChildren(el);
+    }
+  } catch (err) {
+    if (token !== noteToken) return;
+    body.innerHTML = `
+      <div class="notice-inline">
+        <p>${esc(err.message)}</p>
+        <button class="btn" data-retry="note">Try again</button>
+      </div>`;
+  }
 }
 
 /* ---------- drawer (mobile) ---------- */
@@ -235,13 +334,28 @@ function setDrawer(open) {
 }
 
 /* ---------- router ---------- */
-function route() {
+async function route() {
+  const token = ++routeToken;
   closeMenu();
   const m = (location.hash || "#/").match(/^#\/subject\/([^/]+)(?:\/(.+))?$/);
+
+  if (!DATA) {
+    showSkeleton(m ? "subject" : "home");
+    try {
+      DATA = await NotesData.loadData();
+    } catch (e) {
+      if (token === routeToken) renderError(e);
+      return;
+    }
+    if (token !== routeToken) return;
+  }
+
   if (m) {
     const name = decodeURIComponent(m[1]);
-    if (currentSubject !== name || !document.getElementById("index")) buildSubject(name);
-    showTopic(m[2] ? decodeURIComponent(m[2]) : null);
+    const found = DATA.subjects.find((s) => s.name === name);
+    if (!found) { renderNotFound(name); return; }
+    if (currentSubject !== name || !document.getElementById("index")) buildSubject(found);
+    await showTopic(m[2] ? decodeURIComponent(m[2]) : null);
     setDrawer(false);
   } else {
     renderHome();
@@ -263,6 +377,28 @@ document.addEventListener("click", (e) => {
   const dots = t.closest(".dots");
   if (dots) { e.stopPropagation(); openMenu(dots, dots.dataset.menu); return; }
   closeMenu();
+
+  /* in-page links (table of contents, footnotes) scroll instead of changing the route */
+  const anchor = t.closest('a[href^="#"]');
+  if (anchor && !anchor.getAttribute("href").startsWith("#/")) {
+    e.preventDefault();
+    let target = null;
+    try { target = document.getElementById(decodeURIComponent(anchor.getAttribute("href").slice(1))); } catch { /* bad escape */ }
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  const retry = t.closest("[data-retry]");
+  if (retry) {
+    if (retry.dataset.retry === "data") {
+      NotesData.resetData();
+      DATA = null;
+      route();
+    } else if (subj) {
+      showTopic(currentTopicId);
+    }
+    return;
+  }
 
   const modeBtn = t.closest(".mode-btn");
   if (modeBtn) {
