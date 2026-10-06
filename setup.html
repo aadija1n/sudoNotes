@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="robots" content="noindex" />
+  <title>Admin setup · Notes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="notes.css" />
+  <link rel="stylesheet" href="auth.css" />
+</head>
+<body>
+  <main class="setup">
+    <h1>Admin setup</h1>
+    <p class="lead">Create the login for writing mode. Everything happens in this browser tab. Nothing you type is sent anywhere except a read-only check against GitHub.</p>
+
+    <form id="form" class="card" autocomplete="off">
+      <h2>1. Your details</h2>
+
+      <label class="field">
+        <span>Repository (owner/name)</span>
+        <input id="repo" placeholder="your-name/your-repo" spellcheck="false" />
+      </label>
+
+      <details>
+        <summary>How to create the GitHub token</summary>
+        <ol>
+          <li>GitHub → your profile → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>
+          <li><b>Repository access:</b> Only select repositories, then pick this repo.</li>
+          <li><b>Permissions → Repository permissions → Contents:</b> Read and write.</li>
+          <li>Choose an expiration (for example 1 year) and generate. Copy the token. It starts with <code>github_pat_</code>.</li>
+        </ol>
+      </details>
+
+      <label class="field">
+        <span>GitHub token</span>
+        <input id="token" type="password" placeholder="github_pat_..." spellcheck="false" autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span>Admin username</span>
+        <input id="username" spellcheck="false" autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span>Admin password</span>
+        <input id="password" type="password" autocomplete="new-password" />
+        <div class="strength" id="strength"></div>
+      </label>
+
+      <label class="field">
+        <span>Confirm password</span>
+        <input id="password2" type="password" autocomplete="new-password" />
+      </label>
+
+      <p class="form-error" id="error" role="alert"></p>
+      <button class="btn primary" id="go" type="submit">Generate auth.json</button>
+    </form>
+
+    <section class="card hidden" id="result">
+      <h2>2. Add the file to your repo</h2>
+      <p class="form-ok" id="result-note"></p>
+      <textarea id="json" readonly spellcheck="false"></textarea>
+      <div class="row-btns">
+        <button class="btn primary" id="download" type="button">Download auth.json</button>
+        <button class="btn" id="copy" type="button">Copy</button>
+      </div>
+      <ol class="steps">
+        <li>In your repo on GitHub choose <b>Add file → Upload files</b> and drop <code>auth.json</code> next to <code>index.html</code>. (Or choose <b>Create new file</b>, name it <code>auth.json</code> and paste the text.)</li>
+        <li>Commit it, wait a minute for GitHub Pages to publish, then open your site and click <b>W</b>.</li>
+        <li>Forgot the password or the token expired? Run this page again and replace <code>auth.json</code>.</li>
+      </ol>
+      <p style="color:var(--text-muted);font-size:13px">The repo is public, so anyone can read <code>auth.json</code>. Your token inside it is encrypted with your password, so a longer password means better protection.</p>
+    </section>
+  </main>
+
+  <script defer src="config.js"></script>
+  <script defer src="data.js"></script>
+  <script defer src="auth.js"></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const $ = (id) => document.getElementById(id);
+      const repo = NotesData.detectRepo();
+      if (repo) $("repo").value = `${repo.owner}/${repo.repo}`;
+
+      $("password").addEventListener("input", () => {
+        const p = $("password").value;
+        const el = $("strength");
+        if (!p) { el.textContent = ""; return; }
+        const kinds = [/[a-z]/, /[A-Z]/, /\d/, /[^\w\s]/].filter((r) => r.test(p)).length;
+        const score = p.length >= 14 && kinds >= 3 ? 2 : p.length >= 10 && kinds >= 2 ? 1 : 0;
+        el.className = "strength " + ["form-error", "form-warn", "form-ok"][score];
+        el.textContent = ["Weak. Use 10+ characters with a mix of letters and numbers.", "Okay. 14+ characters is better.", "Strong."][score];
+      });
+
+      let output = "";
+      $("form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const err = $("error");
+        err.className = "form-error";
+        err.textContent = "";
+
+        const token = $("token").value.trim();
+        const user = $("username").value.trim();
+        const pw = $("password").value;
+        const repoText = $("repo").value.trim();
+
+        if (token.length < 20) return (err.textContent = "Paste your GitHub token first.");
+        if (user.length < 3) return (err.textContent = "Choose a username with at least 3 characters.");
+        if (pw.length < 8) return (err.textContent = "The password needs at least 8 characters.");
+        if (pw !== $("password2").value) return (err.textContent = "The two passwords do not match.");
+
+        $("go").disabled = true;
+        $("go").textContent = "Working…";
+        await new Promise((r) => setTimeout(r, 30));
+
+        let note = "Created. Token and password were checked against each other.";
+        try {
+          const m = repoText.match(/^([\w.-]+)\/([\w.-]+)$/);
+          if (m) {
+            const check = await Auth.checkWriteAccess(token, { owner: m[1], repo: m[2] });
+            if (check.ok === false) note = `Created, but: ${check.reason} You can still use the file, then fix the token and generate again.`;
+          }
+          const record = await Auth.createRecord(user, pw, token);
+          const back = await Auth.unlock(record, user, pw); // sanity round trip
+          Auth.lock();
+          if (back !== token) throw new Error("Round-trip check failed.");
+          output = JSON.stringify(record, null, 2) + "\n";
+          $("json").value = output;
+          $("result-note").textContent = note;
+          $("result-note").className = note.includes("but:") ? "form-warn" : "form-ok";
+          $("result").classList.remove("hidden");
+          $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (ex) {
+          err.textContent = "Something went wrong: " + ex.message;
+        } finally {
+          $("go").disabled = false;
+          $("go").textContent = "Generate auth.json";
+        }
+      });
+
+      $("download").addEventListener("click", () => {
+        const url = URL.createObjectURL(new Blob([output], { type: "application/json" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "auth.json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+
+      $("copy").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(output); $("copy").textContent = "Copied"; }
+        catch { $("json").select(); $("copy").textContent = "Press Ctrl+C"; }
+        setTimeout(() => { $("copy").textContent = "Copy"; }, 1500);
+      });
+    });
+  </script>
+</body>
+</html>

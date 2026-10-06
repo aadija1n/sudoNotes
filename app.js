@@ -29,7 +29,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* unavailable */ } },
 };
 
-function toast(message) {
+function toast(message, ms = 2600) {
   const host = document.getElementById("toasts");
   const el = document.createElement("div");
   el.className = "toast";
@@ -38,7 +38,7 @@ function toast(message) {
   setTimeout(() => {
     el.classList.add("out");
     setTimeout(() => el.remove(), 260);
-  }, 2600);
+  }, ms);
 }
 
 function flatTopics(s) {
@@ -50,7 +50,8 @@ function setMode(next) {
   mode = next;
   document.body.classList.toggle("write", mode === "w");
   document.querySelectorAll(".mode-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
-  if (mode === "r") closeMenu();
+  if (mode === "r") { closeMenu(); Auth.lock(); } // leaving write mode forgets the token
+  armIdle();
 }
 
 /* ---------- dropdown menus ---------- */
@@ -363,6 +364,135 @@ async function route() {
   }
 }
 
+/* ---------- admin login (W button) ---------- */
+const IDLE_MS = 30 * 60 * 1000;
+let idleTimer = null;
+let modalReturnFocus = null;
+
+/* Writing mode locks itself after 30 minutes without clicks or keys. */
+function armIdle() {
+  clearTimeout(idleTimer);
+  if (mode !== "w") return;
+  idleTimer = setTimeout(() => {
+    setMode("r");
+    toast("Locked after 30 minutes of inactivity", 4000);
+  }, IDLE_MS);
+}
+["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, armIdle, { passive: true }));
+
+function closeModal() {
+  const m = document.getElementById("modal");
+  if (m) m.remove();
+  if (modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus();
+  modalReturnFocus = null;
+}
+
+function openModal(html) {
+  const keep = modalReturnFocus;
+  closeModal();
+  modalReturnFocus = keep;
+  const wrap = document.createElement("div");
+  wrap.className = "modal-backdrop";
+  wrap.id = "modal";
+  wrap.innerHTML = html;
+  wrap.addEventListener("mousedown", (e) => { if (e.target === wrap) closeModal(); });
+  document.body.appendChild(wrap);
+  return wrap;
+}
+
+async function requestWrite(btn) {
+  if (mode === "w") return;
+  modalReturnFocus = btn;
+  let record;
+  try {
+    record = await Auth.loadRecord();
+  } catch (e) {
+    const notSetup = e.code === "not-setup";
+    openModal(`
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+        <h2 id="m-title">${notSetup ? "Admin login not set up" : "Can't open login"}</h2>
+        <p class="modal-sub">${notSetup
+          ? "Create your username and password with the setup page, then add the generated <code>auth.json</code> to your repo."
+          : esc(e.message)}</p>
+        <div class="modal-actions">
+          <button class="btn" data-modal-close>Close</button>
+          ${notSetup ? `<a class="btn primary" href="setup.html" target="_blank" rel="noopener">Open setup</a>` : ""}
+        </div>
+      </div>`);
+    return;
+  }
+  showLogin(record);
+}
+
+function showLogin(record) {
+  const wrap = openModal(`
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="on">
+      <h2 id="m-title">Admin login</h2>
+      <p class="modal-sub">Enter your credentials to unlock writing mode.</p>
+      <label class="field"><span>Username</span><input name="username" autocomplete="username" spellcheck="false" required /></label>
+      <label class="field"><span>Password</span>
+        <div class="pw"><input name="password" type="password" autocomplete="current-password" required />
+        <button type="button" class="pw-toggle" aria-label="Show password">Show</button></div>
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn primary">Unlock</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const user = form.elements.username;
+  const pass = form.elements.password;
+  const err = wrap.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  let fails = 0;
+  user.focus();
+
+  const setBusy = (busy) => {
+    user.disabled = pass.disabled = submit.disabled = busy;
+    submit.textContent = busy ? "Checking…" : "Unlock";
+  };
+
+  wrap.querySelector(".pw-toggle").addEventListener("click", (e) => {
+    const show = pass.type === "password";
+    pass.type = show ? "text" : "password";
+    e.currentTarget.textContent = show ? "Hide" : "Show";
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.textContent = "";
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 30)); // let "Checking…" paint before the heavy key derivation
+    try {
+      const token = await Auth.unlock(record, user.value, pass.value);
+      closeModal();
+      setMode("w");
+      toast("Writing mode unlocked");
+      checkTokenAccess(token);
+    } catch (ex) {
+      const wrong = ex.code === "bad-credentials";
+      err.textContent = wrong ? "Incorrect username or password." : "The admin file looks damaged. Generate it again with setup.html.";
+      form.classList.remove("shake");
+      void form.offsetWidth; // restart the shake animation
+      form.classList.add("shake");
+      pass.value = "";
+      if (wrong && ++fails >= 3) await new Promise((r) => setTimeout(r, (fails - 2) * 1000)); // slow down guessing
+      setBusy(false);
+      pass.focus();
+    }
+  });
+}
+
+/* Advisory only: warns early if the saved token cannot write to this repo. */
+async function checkTokenAccess(token) {
+  const repo = NotesData.detectRepo();
+  if (!repo) return;
+  const result = await Auth.checkWriteAccess(token, repo);
+  if (result.ok === false) toast(`Heads up: ${result.reason}`, 6000);
+}
+
 /* ---------- events (delegated) ---------- */
 document.addEventListener("click", (e) => {
   const t = e.target;
@@ -400,11 +530,12 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  if (t.closest("[data-modal-close]")) { closeModal(); return; }
+
   const modeBtn = t.closest(".mode-btn");
   if (modeBtn) {
-    const next = modeBtn.dataset.mode;
-    if (next === "w" && mode !== "w") toast("Write mode preview. The login check arrives in Phase 4");
-    setMode(next);
+    if (modeBtn.dataset.mode === "w") requestWrite(modeBtn);
+    else setMode("r");
     return;
   }
 
@@ -418,7 +549,7 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMenu(); setDrawer(false); }
+  if (e.key === "Escape") { closeMenu(); closeModal(); setDrawer(false); }
 });
 
 window.addEventListener("hashchange", route);

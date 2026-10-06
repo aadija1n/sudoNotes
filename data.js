@@ -146,5 +146,5 @@
     return res.text();
   }
 
-  global.NotesData = { loadData, resetData, loadNote, parseTree, root };
+  global.NotesData = { loadData, resetData, loadNote, parseTree, detectRepo, root };
 })(typeof window !== "undefined" ? window : globalThis);
