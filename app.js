@@ -1,4 +1,4 @@
-/* Phase 3: real data from your GitHub repo, rendered markdown.
+/* Phase 3 / 5R: real data from the notes repository, rendered markdown.
    Editing menus are still previews (they show which phase makes them work). */
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
@@ -121,7 +121,7 @@ function localScreen(e) {
   switch (e.code) {
     case "unsupported": {
       const brave = !!(navigator.brave);
-      const repoHint = `<p>To read your notes from GitHub in this browser instead, open <code>config.js</code> and fill in <code>owner</code> and <code>repo</code> (read-only view, no folder needed).</p>`;
+      const repoHint = `<p>To read your notes from GitHub in this browser instead, open <code>config.js</code> and fill in <code>owner</code> and <code>repo</code> of your <b>notes repository</b> (read-only view, no folder needed).</p>`;
       const body = brave
         ? `<p>Brave turns off folder access by default. To turn it on:</p>
            <ol style="text-align:left;color:var(--text-muted);margin:0 0 16px;padding-left:22px">
@@ -154,6 +154,7 @@ function renderError(e) {
   currentSubject = null;
   subj = null;
   document.body.classList.remove("subject-view");
+  if (e.code === "not-configured") { renderNotConfigured(); return; }
   const local = localScreen(e);
   if (local) {
     document.title = "Notes";
@@ -161,14 +162,14 @@ function renderError(e) {
     return;
   }
   const titles = {
-    "no-config": "Repository not detected",
     "rate-limit": "GitHub limit reached",
-    "not-found": "Repository not found",
+    "not-found": "Notes repository not found",
+    "empty-repo": "Notes repository is empty",
     network: "Can't connect",
     libs: "Couldn't load the page",
   };
-  const extra = e.code === "no-config"
-    ? `<p>Open this site from its GitHub Pages address, or set <code>owner</code> and <code>repo</code> in <code>config.js</code>.</p>`
+  const extra = e.code === "not-found"
+    ? `<p>Check <code>owner</code>, <code>repo</code> and <code>branch</code> in <code>config.js</code>. The notes repository must be public. To change it, click <b>W</b>, log in and choose “Change notes repository”.</p>`
     : "";
   document.title = "Notes";
   app.innerHTML = `
@@ -179,6 +180,22 @@ function renderError(e) {
       ${titles[e.code] ? "" : `<p>Try again. If it keeps happening, reload the page or open it in Chrome or Edge.</p>`}
       <div class="row"><button class="btn" data-retry="data">Try again</button></div>
     </div>`;
+}
+
+/* Pages site with no notes repository set: nothing is read from anywhere. R / W stay so the admin can log in. */
+function renderNotConfigured() {
+  currentSubject = null;
+  subj = null;
+  document.body.classList.remove("subject-view");
+  document.title = "Notes";
+  app.innerHTML = `
+    <div class="notice">
+      <h2>No notes source yet</h2>
+      <p>No notes source is configured for this site yet. Please check back later.</p>
+      <div class="row"><button class="btn primary w-only" id="set-repo">Set notes repository</button></div>
+    </div>
+    ${modeSwitch("home-mode")}`;
+  setMode(mode);
 }
 
 function renderNotFound(name) {
@@ -201,6 +218,8 @@ function renderHome() {
   document.body.classList.remove("subject-view");
   document.title = "Notes";
   const last = store.get(LAST_SUBJECT);
+  const nr = NotesData.notesRepo();
+  const repoLabel = nr ? `${nr.owner}/${nr.repo}` : "";
 
   const tiles = DATA.subjects.map((s, i) => {
     const cls = s.name === last ? "tile last-opened" : "tile";
@@ -210,7 +229,7 @@ function renderHome() {
   const empty = `
     <div class="notice-inline">
       <p>No subjects found yet.</p>
-      <p>Add a note to your repo, for example <code>${esc(NotesData.root)}/Python/Chapter 01 - Basics/1.1 Variables.md</code>, and it will appear here.</p>
+      <p>Add a note to your notes repository, for example <code>${esc(NotesData.root)}/Python/Chapter 01 - Basics/1.1 Variables.md</code>, and it will appear here.</p>
     </div>`;
 
   app.innerHTML = `
@@ -224,7 +243,7 @@ function renderHome() {
       ? `<p class="source-note">Working offline in the folder <b>${esc(NotesLocal.folderName())}</b>. <button class="link-btn" data-local="pick">Change folder</button></p>`
       : NotesData.sourceInfo().viewOnly
         ? `<p class="source-note">Read-only view from GitHub. ${NotesData.sourceInfo().fallback ? "This browser can't open folders, so editing is off here." : "Editing needs the published site or a folder-capable browser."}</p>`
-        : ""}
+        : `<p class="source-note">Notes from <b>${esc(repoLabel)}</b>. <button class="link-btn w-only" id="set-repo">Change notes repository</button></p>`}
     ${modeSwitch("home-mode")}
   `;
   setMode(mode);
@@ -563,12 +582,135 @@ function showLogin(record) {
   });
 }
 
-/* Advisory only: warns early if the saved token cannot write to this repo. */
+/* Right after login: with no notes repository the admin is taken to the setup form,
+   otherwise this is advisory only (warns early if the token cannot write to the notes repo). */
 async function checkTokenAccess(token) {
-  const repo = NotesData.detectRepo();
-  if (!repo) return;
+  const repo = NotesData.notesRepo();
+  if (!repo) {
+    if (NotesData.source() === "github") openNotesRepoForm();
+    return;
+  }
   const result = await Auth.checkWriteAccess(token, repo);
   if (result.ok === false) toast(`Heads up: ${result.reason}`, 6000);
+}
+
+/* ---------- Set notes repository (Phase 5R) ---------- */
+function openNotesRepoForm() {
+  if (mode !== "w" || !Auth.isUnlocked()) { toast("Click W and log in first."); return; }
+  const cur = NotesData.notesRepo();
+  modalReturnFocus = document.activeElement;
+  const wrap = openModal(`
+    <form class="modal wide" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
+      <h2 id="m-title">${cur ? "Change notes repository" : "Set notes repository"}</h2>
+      <p class="modal-sub">Your notes live in their own <b>public</b> GitHub repository, separate from this site, so saving a note never rebuilds the site. Create that repository first if you have not (add a README so it has a first commit).</p>
+      <label class="field"><span>Notes repository (owner/name)</span>
+        <input name="repo" value="${esc(cur ? `${cur.owner}/${cur.repo}` : "")}" placeholder="your-name/my-notes" spellcheck="false" required /></label>
+      <label class="field"><span>Branch (optional)</span>
+        <input name="branch" value="${esc(cur ? cur.branch : "")}" placeholder="default branch" spellcheck="false" /></label>
+      <label class="field"><span>Folder for subjects (optional)</span>
+        <input name="root" value="${esc(cur ? cur.root : "")}" placeholder="notes" spellcheck="false" />
+        <small>Leave empty to use <code>notes</code>.</small></label>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn primary">Verify and save</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const err = form.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  const fields = [form.elements.repo, form.elements.branch, form.elements.root];
+  let busy = false;
+  const setBusy = (on, text) => {
+    busy = on;
+    fields.forEach((f) => { f.disabled = on; });
+    submit.disabled = on;
+    submit.textContent = text || "Verify and save";
+  };
+  fields[0].focus();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    err.textContent = "";
+    setBusy(true, "Checking repository…");
+    let verified;
+    try {
+      verified = await NotesWrite.verifyNotesRepo({ repo: fields[0].value, branch: fields[1].value, root: fields[2].value });
+    } catch (ex) {
+      err.textContent = ex.message || "Could not check that repository. Nothing was changed.";
+      setBusy(false);
+      fields[0].focus();
+      return;
+    }
+
+    // From now on this page session reads and writes the new notes repository (config.js is not deployed yet).
+    NotesData.setNotesRepo(verified.repo);
+    noteCache.clear();
+    DATA = null;
+    history.replaceState(null, "", `${location.pathname}${location.search}#/`);
+    route();
+
+    submit.textContent = "Saving the setting…";
+    showRepoResult(wrap, verified, await trySaveConfig(verified.repo));
+  });
+}
+
+async function trySaveConfig(repo) {
+  try {
+    await NotesWrite.saveConfig(repo);
+    return { saved: true };
+  } catch (ex) {
+    return { saved: false, reason: ex.message || "The setting could not be saved." };
+  }
+}
+
+function showRepoResult(wrap, verified, outcome) {
+  const modal = wrap.querySelector(".modal");
+  const name = `${verified.repo.owner}/${verified.repo.repo}`;
+  const warn = verified.warnings.map((w) => `<p class="modal-sub form-warn">${esc(w)}</p>`).join("");
+
+  if (outcome.saved) {
+    modal.innerHTML = `
+      <h2 id="m-title">Notes repository set</h2>
+      <p class="modal-sub">This session now reads and writes <b>${esc(name)}</b> right away. The choice was saved to <code>config.js</code> in this site's repository (one commit). The <b>public site switches to the new notes repository after GitHub Pages finishes deploying</b>, usually within a minute or two.</p>
+      ${warn}
+      <div class="modal-actions"><button type="button" class="btn primary" data-modal-close>Done</button></div>`;
+    return;
+  }
+
+  const text = NotesData.configText(verified.repo);
+  modal.innerHTML = `
+    <h2 id="m-title">Works now, but not saved yet</h2>
+    <p class="modal-sub">This session already uses <b>${esc(name)}</b>, so you can keep working. The setting could not be saved to the site automatically: ${esc(outcome.reason)}</p>
+    <p class="modal-sub">To make it permanent for everyone, replace the whole content of <code>config.js</code> with this text:</p>
+    <textarea id="cfg-text" readonly spellcheck="false">${esc(text)}</textarea>
+    <div class="row-btns">
+      <button type="button" class="btn primary" id="cfg-copy">Copy</button>
+      <button type="button" class="btn" id="cfg-retry">Try saving again</button>
+    </div>
+    <ol class="steps">
+      <li>On GitHub open this site's repository and the file <code>config.js</code>.</li>
+      <li>Click the pencil (Edit), select everything, paste, then choose <b>Commit changes</b>.</li>
+      <li>Wait a minute or two for GitHub Pages to publish. After that the public site uses the notes repository.</li>
+    </ol>
+    ${warn}
+    <div class="modal-actions"><button type="button" class="btn" data-modal-close>Done</button></div>`;
+
+  const area = modal.querySelector("#cfg-text");
+  const copy = modal.querySelector("#cfg-copy");
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(text); copy.textContent = "Copied"; }
+    catch { area.select(); copy.textContent = "Press Ctrl+C"; }
+    setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+  });
+  const retry = modal.querySelector("#cfg-retry");
+  retry.addEventListener("click", async () => {
+    retry.disabled = true;
+    retry.textContent = "Saving…";
+    showRepoResult(wrap, verified, await trySaveConfig(verified.repo));
+  });
 }
 
 /* ---------- writing: dialogs and subject actions (Phase 5) ---------- */
@@ -783,6 +925,8 @@ document.addEventListener("click", (e) => {
   }
 
   if (t.closest("[data-modal-close]")) { closeModal(); return; }
+
+  if (t.closest("#set-repo")) { openNotesRepoForm(); return; }
 
   const modeBtn = t.closest(".mode-btn");
   if (modeBtn) {

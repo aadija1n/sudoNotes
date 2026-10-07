@@ -20,17 +20,25 @@
       <h2>1. Your details</h2>
 
       <label class="field">
-        <span>Repository (owner/name)</span>
-        <input id="repo" placeholder="your-name/your-repo" spellcheck="false" />
+        <span>Notes repository (owner/name)</span>
+        <input id="repo" placeholder="your-name/my-notes" spellcheck="false" />
+        <small>The separate public repository that holds your notes. Used only for the write check.</small>
+      </label>
+
+      <label class="field">
+        <span>Site repository (owner/name, where this site and auth.json live)</span>
+        <input id="apprepo" placeholder="your-name/your-site" spellcheck="false" />
+        <small>Filled in automatically on a github.io address. Leave empty to skip checking it.</small>
       </label>
 
       <details>
         <summary>How to create the GitHub token</summary>
         <ol>
           <li>GitHub → your profile → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>
-          <li><b>Repository access:</b> Only select repositories, then pick this repo.</li>
-          <li><b>Permissions → Repository permissions → Contents:</b> Read and write.</li>
+          <li><b>Repository access:</b> Only select repositories, then pick <b>BOTH</b> the notes repository and the site repository (the one that holds <code>index.html</code> and <code>auth.json</code>).</li>
+          <li><b>Permissions → Repository permissions → Contents:</b> Read and write. The site repository permission is only needed for the one-time “Set notes repository” save; everyday note edits only touch the notes repository.</li>
           <li>Choose an expiration (for example 1 year) and generate. Copy the token. It starts with <code>github_pat_</code>.</li>
+          <li>Already have a token and <code>auth.json</code>? Editing a token's repositories or permissions does not change the token string, so your existing <code>auth.json</code> stays valid. You only need to run this page again for a new token or password.</li>
         </ol>
       </details>
 
@@ -60,7 +68,7 @@
     </form>
 
     <section class="card hidden" id="result">
-      <h2>2. Add the file to your repo</h2>
+      <h2>2. Add the file to your site repository</h2>
       <p class="form-ok" id="result-note"></p>
       <textarea id="json" readonly spellcheck="false"></textarea>
       <div class="row-btns">
@@ -68,7 +76,7 @@
         <button class="btn" id="copy" type="button">Copy</button>
       </div>
       <ol class="steps">
-        <li>In your repo on GitHub choose <b>Add file → Upload files</b> and drop <code>auth.json</code> next to <code>index.html</code>. (Or choose <b>Create new file</b>, name it <code>auth.json</code> and paste the text.)</li>
+        <li>In your repo on GitHub choose <b>Add file → Upload files</b> and drop <code>auth.json</code> next to <code>index.html</code> in the <b>site</b> repository (not the notes repository). (Or choose <b>Create new file</b>, name it <code>auth.json</code> and paste the text.)</li>
         <li>Commit it, wait a minute for GitHub Pages to publish, then open your site and click <b>W</b>.</li>
         <li>Forgot the password or the token expired? Run this page again and replace <code>auth.json</code>.</li>
       </ol>
@@ -82,8 +90,10 @@
   <script defer>
     window.addEventListener("DOMContentLoaded", () => {
       const $ = (id) => document.getElementById(id);
-      const repo = NotesData.detectRepo();
-      if (repo) $("repo").value = `${repo.owner}/${repo.repo}`;
+      const notes = NotesData.notesRepo();
+      if (notes) $("repo").value = `${notes.owner}/${notes.repo}`;
+      const site = NotesData.appRepo();
+      if (site) $("apprepo").value = `${site.owner}/${site.repo}`;
 
       $("password").addEventListener("input", () => {
         const p = $("password").value;
@@ -106,6 +116,7 @@
         const user = $("username").value.trim();
         const pw = $("password").value;
         const repoText = $("repo").value.trim();
+        const appText = $("apprepo").value.trim();
 
         if (token.length < 20) return (err.textContent = "Paste your GitHub token first.");
         if (user.length < 3) return (err.textContent = "Choose a username with at least 3 characters.");
@@ -116,21 +127,27 @@
         $("go").textContent = "Working…";
         await new Promise((r) => setTimeout(r, 30));
 
-        let note = "Created. Token and password were checked against each other.";
+        const lines = ["Created. Token and password were checked against each other."];
+        let warn = false;
         try {
-          const m = repoText.match(/^([\w.-]+)\/([\w.-]+)$/);
-          if (m) {
+          const parse = (t) => t.match(/^([\w.-]+)\/([\w.-]+)$/);
+          const checks = [["Notes repository", parse(repoText)], ["Site repository", parse(appText)]];
+          for (const [name, m] of checks) {
+            if (!m) { lines.push(`${name}: not checked (nothing entered).`); continue; }
             const check = await Auth.checkWriteAccess(token, { owner: m[1], repo: m[2] });
-            if (check.ok === false) note = `Created, but: ${check.reason} You can still use the file, then fix the token and generate again.`;
+            if (check.ok === true) lines.push(`${name} ${m[1]}/${m[2]}: writable.`);
+            else { warn = true; lines.push(`${name} ${m[1]}/${m[2]}: NOT writable. ${check.reason}`); }
           }
+          if (warn) lines.push("You can still use the file. Fix the token's repositories or permissions on GitHub (no need to generate again unless you make a new token). The site repository only needs write access for the one-time save of the notes repository setting.");
           const record = await Auth.createRecord(user, pw, token);
           const back = await Auth.unlock(record, user, pw); // sanity round trip
           Auth.lock();
           if (back !== token) throw new Error("Round-trip check failed.");
           output = JSON.stringify(record, null, 2) + "\n";
           $("json").value = output;
-          $("result-note").textContent = note;
-          $("result-note").className = note.includes("but:") ? "form-warn" : "form-ok";
+          $("result-note").textContent = lines.join("\n");
+          $("result-note").style.whiteSpace = "pre-line";
+          $("result-note").className = warn ? "form-warn" : "form-ok";
           $("result").classList.remove("hidden");
           $("result").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (ex) {

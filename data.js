@@ -1,13 +1,20 @@
-/* Phase 3: data layer. Reads the repo folder tree from the GitHub API (one call,
-   cached for a minute) and note text from the site itself.
+/* Phase 3 / 5R: data layer. Reads the folder tree of the NOTES repository from the GitHub API
+   (one call, cached for a minute) and note text from raw.githubusercontent.com.
 
-   Expected repo layout:
+   Two repositories are kept strictly apart:
+     - APP repo   = where this site and auth.json live. Detected from the Pages URL by appRepo().
+                    The only thing ever written there is config.js (one time, when you set the notes repo).
+     - NOTES repo = where the notes live. Comes from config.js (owner/repo/branch/root) via notesRepo(),
+                    or from the admin's "Set notes repository" choice for the current page session.
+                    Empty owner/repo means "not configured": nothing is read from anywhere.
+
+   Expected layout inside the notes repo:
      notes/<Subject>/Chapter 01 - Name/1.1 Topic title.md                            */
 
 (function (global) {
   const cfg = global.NOTES_CONFIG || {};
-  const root = String(cfg.root || "notes").replace(/^\/+|\/+$/g, "");
   const TREE_TTL_MS = 60 * 1000;
+  const DEFAULT_ROOT = "notes";
 
   const CHAPTER_RE = /^Chapter\s+(\d+)\s*-\s*(.+)$/i;
   const TOPIC_RE = /^(\d+)\.(\d+)\s+(.+)\.md$/i;
@@ -18,9 +25,60 @@
     return e;
   }
 
+  /* ---------- the notes repository (from config.js, or set for this session) ---------- */
+  const str = (v) => (typeof v === "string" ? v.trim() : "");
+  const cleanRoot = (r) => str(r).replace(/^\/+|\/+$/g, "") || DEFAULT_ROOT;
+  const fromConfig = () => ({ owner: str(cfg.owner), repo: str(cfg.repo), branch: str(cfg.branch), root: cleanRoot(cfg.root) });
+  let active = fromConfig();
+
+  /* { owner, repo, branch, root } or null when no notes repository is configured. */
+  function notesRepo() {
+    return active.owner && active.repo ? { ...active } : null;
+  }
+  const isConfigured = () => !!notesRepo();
+
+  /* Uses another notes repository from now on (this page session only; config.js is untouched). */
+  function setNotesRepo(r) {
+    active = { owner: str(r.owner), repo: str(r.repo), branch: str(r.branch), root: cleanRoot(r.root) };
+    resetData();
+  }
+
+  /* ---------- the app repository (only ever used to save config.js) ---------- */
+  const hostName = () => ((global.location && global.location.hostname) || "").toLowerCase();
+
+  function appRepo() {
+    const host = hostName();
+    if (!host.endsWith(".github.io")) return null; // custom domain, localhost, file: cannot be told
+    const owner = host.split(".")[0];
+    const first = global.location.pathname.split("/").filter(Boolean)[0];
+    const repo = first && !/\.html?$/i.test(first) ? first : `${owner}.github.io`;
+    return { owner, repo };
+  }
+
+  /* The text of config.js for a given notes repository (used by the one-time save and the paste fallback). */
+  function configText(r) {
+    const q = (v) => JSON.stringify(String(v == null ? "" : v));
+    const mode = cfg.mode === "local" || cfg.mode === "github" ? `  mode: ${q(cfg.mode)},\n` : "";
+    return `/* Configuration.
+   owner / repo / branch / root describe the NOTES repository: the separate, public GitHub
+   repo that holds all your notes. This site's own repo is never used for notes.
+   - Leave owner and repo empty while no notes repository is set. Visitors then see a
+     "not configured" notice. Log in with W and use "Set notes repository" and the app
+     writes this file for you.
+   - branch: leave empty to use the repository's default branch.
+   - root: the folder in the notes repo that holds all subjects (default "notes"). */
+window.NOTES_CONFIG = {
+  owner: ${q(r && r.owner)},
+  repo: ${q(r && r.repo)},
+  branch: ${q(r && r.branch)},
+  root: ${q(cleanRoot(r && r.root))},
+${mode}};
+`;
+  }
+
   /* ---------- which backend? ----------
-     source() answers "github" (read the repo through the GitHub API, write with the admin token)
-     or "local" (read and write the cloned repo's notes folder with browser folder access).
+     source() answers "github" (read the notes repo through GitHub, write with the admin token)
+     or "local" (read and write the cloned project's notes folder with browser folder access).
 
      Rule order, first match wins:
        1. Host is *.github.io                  -> "github". Always. Pages never shows local screens,
@@ -30,12 +88,11 @@
        4. Opened from this computer (file:, localhost, 127.x, ::1) -> "local".
        5. Any other host (custom domain)       -> "github".
      Then one capability check: if the result is "local" but this browser has no showDirectoryPicker
-     (Brave by default, Firefox, Safari) and owner/repo are known (config.js), use "github" read-only
-     instead (sourceInfo().fallback is true). With no repo known it stays "local" and the app shows
+     (Brave by default, Firefox, Safari) and a notes repository is configured, use "github" read-only
+     instead (sourceInfo().fallback is true). With no notes repository it stays "local" and the app shows
      how to enable folder access.
-     owner/repo in config.js no longer decide the source on their own: they only say which repo to read. */
+     owner/repo in config.js do not decide the source on their own: they only say which notes repo to read. */
   const LOCAL_HOST_RE = /^(localhost|127(\.\d+){3}|\[?::1\]?|.+\.localhost)$/;
-  const hostName = () => ((global.location && global.location.hostname) || "").toLowerCase();
   const onGithubPages = () => hostName().endsWith(".github.io");
   const onThisComputer = () => (global.location && global.location.protocol === "file:") || hostName() === "" || LOCAL_HOST_RE.test(hostName());
   const canOpenFolders = () => typeof global.showDirectoryPicker === "function";
@@ -48,30 +105,15 @@
     else if (forced === "local" || forced === "github") want = forced;
     else want = onThisComputer() ? "local" : "github";
 
-    const fallback = want === "local" && !canOpenFolders() && !!detectRepo();
+    const fallback = want === "local" && !canOpenFolders() && isConfigured();
     const source = fallback ? "github" : want;
-    // Read-only: folder-access fallback, or a file:// page (cannot fetch auth.json or notes by relative path)
+    // Read-only: folder-access fallback, or a file:// page (cannot fetch auth.json by relative path)
     const viewOnly = fallback || (source === "github" && !!global.location && global.location.protocol === "file:");
     return { source, fallback, viewOnly };
   }
   const source = () => sourceInfo().source;
 
-  /* ---------- repo detection ---------- */
-  function detectRepo() {
-    let owner = cfg.owner;
-    let repo = cfg.repo;
-    if (owner && repo) return { owner, repo };
-    const host = (global.location && global.location.hostname) || "";
-    if (host.endsWith(".github.io")) {
-      owner = owner || host.split(".")[0];
-      const first = global.location.pathname.split("/").filter(Boolean)[0];
-      repo = repo || (first && !/\.html?$/i.test(first) ? first : `${owner}.github.io`);
-      return { owner, repo };
-    }
-    return null;
-  }
-
-  /* ---------- GitHub API ---------- */
+  /* ---------- GitHub API (reads) ---------- */
   /* In writing mode the admin token is attached to reads too (higher rate limit,
      always the latest data). If GitHub rejects the token we silently retry without it. */
   let tokenProvider = null;
@@ -92,13 +134,21 @@
       const mins = reset ? Math.max(1, Math.ceil((reset - Date.now()) / 60000)) : null;
       throw fail("rate-limit", `GitHub's hourly limit for anonymous requests was reached${mins ? `. Try again in about ${mins} minute${mins > 1 ? "s" : ""}` : ""}.`);
     }
-    if (res.status === 404) throw fail("not-found", "Repository or branch not found. The repo must be public.");
+    if (res.status === 404) throw fail("not-found", "The notes repository or branch was not found. Check the repository and branch in config.js. The repository must be public.");
+    if (res.status === 409) throw fail("empty-repo", "The notes repository has no commits yet. Create its first commit on GitHub (for example add a README), then try again.");
     if (!res.ok) throw fail("http", `GitHub returned an unexpected error (${res.status}).`);
     return res.json();
   }
 
+  const segs = (s) => s.split("/").map(encodeURIComponent).join("/");
+  const rawBase = (r) => `https://raw.githubusercontent.com/${r.owner}/${r.repo}/${segs(r.branch || "HEAD")}/`;
+  const pathsOf = (data, root) => (data.tree || []).filter((n) => n.type === "blob" && n.path.startsWith(`${root}/`)).map((n) => n.path);
+  const clearTreeCache = () => {
+    try { Object.keys(sessionStorage).filter((k) => k.startsWith("notes:tree:")).forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ }
+  };
+
   async function fetchPaths(repo) {
-    const key = `notes:tree:${repo.owner}/${repo.repo}:${cfg.branch || "default"}`;
+    const key = `notes:tree:${repo.owner}/${repo.repo}:${repo.branch || "default"}:${repo.root}`;
     try {
       const hit = JSON.parse(sessionStorage.getItem(key) || "null");
       if (hit && Date.now() - hit.t < TREE_TTL_MS) return hit.paths;
@@ -107,17 +157,16 @@
     const base = `/repos/${repo.owner}/${repo.repo}`;
     let data;
     try {
-      data = await api(`${base}/git/trees/${encodeURIComponent(cfg.branch || "HEAD")}?recursive=1`);
+      data = await api(`${base}/git/trees/${encodeURIComponent(repo.branch || "HEAD")}?recursive=1`);
     } catch (e) {
-      if (e.code === "not-found" && !cfg.branch) {
+      if (e.code === "not-found" && !repo.branch) {
         const info = await api(base);
         data = await api(`${base}/git/trees/${encodeURIComponent(info.default_branch)}?recursive=1`);
       } else {
         throw e;
       }
     }
-    const prefix = `${root}/`;
-    const paths = (data.tree || []).filter((n) => n.type === "blob" && n.path.startsWith(prefix)).map((n) => n.path);
+    const paths = pathsOf(data, repo.root);
     try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), paths })); } catch { /* ignore */ }
     return paths;
   }
@@ -163,10 +212,10 @@
   function loadData() {
     if (!dataPromise) {
       dataPromise = (async () => {
-        if (source() === "local") return parseTree(await global.NotesLocal.listPaths(), root);
-        const repo = detectRepo();
-        if (!repo) throw fail("no-config", "Could not work out which GitHub repo to read from.");
-        return parseTree(await fetchPaths(repo), root);
+        if (source() === "local") return parseTree(await global.NotesLocal.listPaths(), active.root);
+        const repo = notesRepo();
+        if (!repo) throw fail("not-configured", "No notes repository has been configured for this site yet.");
+        return parseTree(await fetchPaths(repo), repo.root);
       })();
       dataPromise.catch(() => { dataPromise = null; }); // allow retry after a failure
     }
@@ -175,72 +224,68 @@
 
   function resetData() {
     dataPromise = null;
-    try {
-      Object.keys(sessionStorage).filter((k) => k.startsWith("notes:tree:")).forEach((k) => sessionStorage.removeItem(k));
-    } catch { /* ignore */ }
+    clearTreeCache();
   }
 
   /* Re-reads the whole tree right after a save, from the new tree's id, so the UI
-     shows the change instantly without waiting for GitHub Pages to publish. */
+     shows the change instantly without waiting for any cache. Always the NOTES repo. */
   async function refresh(result) {
     if (source() === "local") {
       dataPromise = null;
       return loadData();
     }
-    const treeSha = result.treeSha;
-    const repo = detectRepo();
-    if (!repo) throw fail("no-config", "Could not work out which GitHub repo to read from.");
-    const data = await api(`/repos/${repo.owner}/${repo.repo}/git/trees/${treeSha}?recursive=1`);
-    const prefix = `${root}/`;
-    const paths = (data.tree || []).filter((n) => n.type === "blob" && n.path.startsWith(prefix)).map((n) => n.path);
-    try {
-      Object.keys(sessionStorage).filter((k) => k.startsWith("notes:tree:")).forEach((k) => sessionStorage.removeItem(k));
-    } catch { /* ignore */ }
-    const parsed = parseTree(paths, root);
+    const repo = notesRepo();
+    if (!repo) throw fail("not-configured", "No notes repository has been configured for this site yet.");
+    const data = await api(`/repos/${repo.owner}/${repo.repo}/git/trees/${result.treeSha}?recursive=1`);
+    clearTreeCache();
+    const parsed = parseTree(pathsOf(data, repo.root), repo.root);
     dataPromise = Promise.resolve(parsed);
     return parsed;
   }
 
   async function loadNote(path) {
     if (source() === "local") return global.NotesLocal.readText(path);
+    const repo = notesRepo();
+    if (!repo) throw fail("not-configured", "No notes repository has been configured for this site yet.");
     const url = path.split("/").map(encodeURIComponent).join("/");
 
-    // In writing mode read through the API: it is always current, while the published
-    // site can lag a minute or two behind a save.
+    // In writing mode read through the API: it is always current, while the raw file host
+    // can lag a few minutes behind a save.
     const token = tokenProvider ? tokenProvider() : null;
-    const repo = token ? detectRepo() : null;
-    if (token && repo) {
+    if (token) {
       try {
-        const ref = cfg.branch ? `?ref=${encodeURIComponent(cfg.branch)}` : "";
+        const ref = repo.branch ? `?ref=${encodeURIComponent(repo.branch)}` : "";
         const r = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${url}${ref}`, {
           headers: { Accept: "application/vnd.github.raw+json", Authorization: `Bearer ${token}` },
         });
         if (r.ok) return r.text();
-      } catch { /* fall back to the published site */ }
+      } catch { /* fall back to the raw file host */ }
     }
 
-    // From a file:// page, or the read-only fallback, the notes are not next to the page:
-    // read them from the repo's raw file host (it allows cross-site reads).
-    let target = url;
-    if (sourceInfo().fallback || (global.location && global.location.protocol === "file:")) {
-      const r0 = detectRepo();
-      if (!r0) throw fail("no-config", "Could not work out which GitHub repo to read from.");
-      target = `https://raw.githubusercontent.com/${r0.owner}/${r0.repo}/${encodeURIComponent(cfg.branch || "HEAD")}/${url}`;
-    }
-
+    // Everyone else: raw file host of the notes repo (no API quota, allows cross-site reads).
     let res;
     try {
-      res = await fetch(target, { cache: "no-cache" });
+      res = await fetch(`${rawBase(repo)}${url}`, { cache: "no-cache" });
     } catch {
       throw fail("network", "Could not load this note. Check your internet connection.");
     }
-    if (res.status === 404) throw fail("not-found", "This note is not published yet. GitHub Pages can take a minute or two after a change.");
+    if (res.status === 404) throw fail("not-found", "This note was not found in the notes repository. If you just saved it, wait a minute and try again.");
     if (!res.ok) throw fail("http", `The note could not be loaded (${res.status}).`);
     return res.text();
   }
 
+  /* Absolute address for a file next to a note (images). `encodedPath` is already URL-encoded.
+     null in offline mode (relative paths work there) or when nothing is configured. */
+  function assetUrl(encodedPath) {
+    if (source() === "local") return null;
+    const repo = notesRepo();
+    return repo ? `${rawBase(repo)}${encodedPath}` : null;
+  }
+
   global.NotesData = {
-    loadData, resetData, loadNote, parseTree, detectRepo, refresh, source, sourceInfo, root,
+    loadData, resetData, loadNote, parseTree, refresh, source, sourceInfo,
+    notesRepo, appRepo, isConfigured, setNotesRepo, configText, assetUrl,
+    get root() { return active.root; },
     setTokenProvider(fn) { tokenProvider = fn; },
   };
 })(typeof window !== "undefined" ? window : globalThis);
