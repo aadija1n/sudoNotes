@@ -7,8 +7,8 @@
    - branch: leave empty to use the repository's default branch.
    - root: the folder in the notes repo that holds all subjects (default "notes"). */
 window.NOTES_CONFIG = {
-  owner: "",
-  repo: "",
-  branch: "",
+  owner: "aadija1n",
+  repo: "sample-notes",
+  branch: "main",
   root: "notes",
 };
