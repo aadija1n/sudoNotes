@@ -4,8 +4,8 @@
    or open the site from somewhere else.
    "root" is the folder in your repo that holds all subjects. */
 window.NOTES_CONFIG = {
-  owner: "",
-  repo: "",
-  branch: "",
-  root: "notes",
+  owner: "aadija1n",
+  repo: "sample-notes",
+  branch: "main",
+  root: "/",
 };
