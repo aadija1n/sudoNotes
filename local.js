@@ -74,7 +74,7 @@
     }
     candidate = null;
     pending = null;
-    await db().set("root", handle);
+    try { await db().set("root", handle); } catch { /* cannot remember the folder (storage blocked): it still works for this visit */ }
   }
 
   /* Called before any read. Throws a coded error the UI turns into a friendly screen. */
@@ -84,7 +84,9 @@
     let saved = null;
     try { saved = await db().get("root"); } catch { /* storage unavailable */ }
     if (!saved) throw fail("need-folder", "Choose the folder of your notes project.");
-    if ((await saved.queryPermission({ mode: "readwrite" })) !== "granted") {
+    let perm;
+    try { perm = await saved.queryPermission({ mode: "readwrite" }); } catch { throw fail("need-folder", "Choose the folder of your notes project."); }
+    if (perm !== "granted") {
       pending = saved;
       throw fail("need-permission", `Allow access to "${saved.name}" again to continue.`);
     }

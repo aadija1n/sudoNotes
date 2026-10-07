@@ -119,8 +119,20 @@ function localScreen(e) {
   const notice = (title, text, buttons) => `<div class="notice"><h2>${title}</h2><p>${text}</p><div class="row">${buttons}</div></div>`;
   const pick = `<button class="btn" data-local="pick">Choose another folder</button>`;
   switch (e.code) {
-    case "unsupported":
-      return notice("This browser can't open folders", esc(e.message), `<button class="btn" data-retry="data">Try again</button>`);
+    case "unsupported": {
+      const brave = !!(navigator.brave);
+      const repoHint = `<p>To read your notes from GitHub in this browser instead, open <code>config.js</code> and fill in <code>owner</code> and <code>repo</code> (read-only view, no folder needed).</p>`;
+      const body = brave
+        ? `<p>Brave turns off folder access by default. To turn it on:</p>
+           <ol style="text-align:left;color:var(--text-muted);margin:0 0 16px;padding-left:22px">
+             <li>Open a new tab and go to <code>brave://flags/#file-system-access-api</code></li>
+             <li>Set <b>File System Access API</b> to <b>Enabled</b></li>
+             <li>Click <b>Relaunch</b>, then open this page again</li>
+           </ol>
+           <p>If you can't find that setting in your Brave version, use Chrome or Edge.</p>${repoHint}`
+        : `<p>This browser can't open folders on your computer, which offline mode needs. Open the page in Chrome or Edge instead.</p>${repoHint}`;
+      return `<div class="notice"><h2>${brave ? "Brave has folder access turned off" : "This browser can't open folders"}</h2>${body}<div class="row"><button class="btn" data-retry="data">Try again</button></div></div>`;
+    }
     case "need-folder":
       return notice("Open your notes folder",
         `This page is running from your computer. Choose the folder of your notes project, the one that contains <code>index.html</code> and the <code>notes</code> folder. Your browser asks once and remembers it.`,
@@ -162,8 +174,9 @@ function renderError(e) {
   app.innerHTML = `
     <div class="notice">
       <h2>${esc(titles[e.code] || "Something went wrong")}</h2>
-      <p>${esc(e.message)}</p>
+      <p>${esc(e.message || "An unexpected problem stopped the page from loading.")}</p>
       ${extra}
+      ${titles[e.code] ? "" : `<p>Try again. If it keeps happening, reload the page or open it in Chrome or Edge.</p>`}
       <div class="row"><button class="btn" data-retry="data">Try again</button></div>
     </div>`;
 }
@@ -209,7 +222,9 @@ function renderHome() {
     ${DATA.subjects.length ? "" : empty}
     ${NotesData.source() === "local"
       ? `<p class="source-note">Working offline in the folder <b>${esc(NotesLocal.folderName())}</b>. <button class="link-btn" data-local="pick">Change folder</button></p>`
-      : ""}
+      : NotesData.sourceInfo().viewOnly
+        ? `<p class="source-note">Read-only view from GitHub. ${NotesData.sourceInfo().fallback ? "This browser can't open folders, so editing is off here." : "Editing needs the published site or a folder-capable browser."}</p>`
+        : ""}
     ${modeSwitch("home-mode")}
   `;
   setMode(mode);
@@ -391,16 +406,20 @@ async function route() {
     if (token !== routeToken) return;
   }
 
-  if (m) {
-    const name = decodeURIComponent(m[1]);
-    const found = DATA.subjects.find((s) => s.name === name);
-    if (!found) { renderNotFound(name); return; }
-    if (currentSubject !== name || !document.getElementById("index")) buildSubject(found);
-    await showTopic(m[2] ? decodeURIComponent(m[2]) : null);
-    setDrawer(false);
-  } else {
-    renderHome();
-    window.scrollTo(0, 0);
+  try {
+    if (m) {
+      const name = decodeURIComponent(m[1]);
+      const found = DATA.subjects.find((s) => s.name === name);
+      if (!found) { renderNotFound(name); return; }
+      if (currentSubject !== name || !document.getElementById("index")) buildSubject(found);
+      await showTopic(m[2] ? decodeURIComponent(m[2]) : null);
+      setDrawer(false);
+    } else {
+      renderHome();
+      window.scrollTo(0, 0);
+    }
+  } catch (e) {
+    if (token === routeToken) renderError(e);
   }
 }
 
@@ -443,6 +462,17 @@ function openModal(html) {
 async function requestWrite(btn) {
   if (mode === "w") return;
   modalReturnFocus = btn;
+  if (NotesData.sourceInfo().viewOnly) {
+    openModal(`
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+        <h2 id="m-title">Editing isn't available here</h2>
+        <p class="modal-sub">${NotesData.sourceInfo().fallback
+          ? "This browser can't open folders, so you are viewing a read-only copy from GitHub. To edit, open the page in Chrome or Edge, or turn on folder access in Brave (<code>brave://flags/#file-system-access-api</code>), or log in on your published site."
+          : "This page was opened as a file, so it can only show your notes. To edit, log in on your published site, or open the app from your project folder in a browser that can open folders."}</p>
+        <div class="modal-actions"><button class="btn" data-modal-close>Close</button></div>
+      </div>`);
+    return;
+  }
   let record;
   try {
     record = await Auth.loadRecord();
@@ -612,7 +642,9 @@ async function localAction(kind) {
   } catch (e) {
     if (e.code === "aborted") return;
     if (e.code === "no-notes") { renderError(e); return; }
-    toast(e.message || "Could not open that folder.", 5000);
+    toast(e.name === "SecurityError"
+      ? "The browser won't open that folder. Choose your project folder itself, not a system folder like Documents or Desktop."
+      : (e.message || "Could not open that folder."), 6000);
     return;
   }
   noteCache.clear();

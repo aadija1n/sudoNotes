@@ -18,16 +18,43 @@
     return e;
   }
 
-  /* Where notes live: "github" (the published site, reading and writing the repo through the
-     GitHub API) or "local" (opened from your own computer, using the notes folder directly).
-     Override with ?source=local or ?source=github in the address, or `mode` in config.js. */
-  function source() {
+  /* ---------- which backend? ----------
+     source() answers "github" (read the repo through the GitHub API, write with the admin token)
+     or "local" (read and write the cloned repo's notes folder with browser folder access).
+
+     Rule order, first match wins:
+       1. Host is *.github.io                  -> "github". Always. Pages never shows local screens,
+                                                  so ?source=local and config.mode "local" are ignored there.
+       2. ?source=local|github in the address  -> that value.
+       3. mode: "local"|"github" in config.js  -> that value.
+       4. Opened from this computer (file:, localhost, 127.x, ::1) -> "local".
+       5. Any other host (custom domain)       -> "github".
+     Then one capability check: if the result is "local" but this browser has no showDirectoryPicker
+     (Brave by default, Firefox, Safari) and owner/repo are known (config.js), use "github" read-only
+     instead (sourceInfo().fallback is true). With no repo known it stays "local" and the app shows
+     how to enable folder access.
+     owner/repo in config.js no longer decide the source on their own: they only say which repo to read. */
+  const LOCAL_HOST_RE = /^(localhost|127(\.\d+){3}|\[?::1\]?|.+\.localhost)$/;
+  const hostName = () => ((global.location && global.location.hostname) || "").toLowerCase();
+  const onGithubPages = () => hostName().endsWith(".github.io");
+  const onThisComputer = () => (global.location && global.location.protocol === "file:") || hostName() === "" || LOCAL_HOST_RE.test(hostName());
+  const canOpenFolders = () => typeof global.showDirectoryPicker === "function";
+
+  function sourceInfo() {
     const m = ((global.location && global.location.search) || "").match(/[?&]source=(local|github)\b/);
     const forced = (m && m[1]) || cfg.mode;
-    if (forced === "local" || forced === "github") return forced;
-    if (cfg.owner && cfg.repo) return "github";
-    return ((global.location && global.location.hostname) || "").endsWith(".github.io") ? "github" : "local";
+    let want;
+    if (onGithubPages()) want = "github";
+    else if (forced === "local" || forced === "github") want = forced;
+    else want = onThisComputer() ? "local" : "github";
+
+    const fallback = want === "local" && !canOpenFolders() && !!detectRepo();
+    const source = fallback ? "github" : want;
+    // Read-only: folder-access fallback, or a file:// page (cannot fetch auth.json or notes by relative path)
+    const viewOnly = fallback || (source === "github" && !!global.location && global.location.protocol === "file:");
+    return { source, fallback, viewOnly };
   }
+  const source = () => sourceInfo().source;
 
   /* ---------- repo detection ---------- */
   function detectRepo() {
@@ -192,9 +219,18 @@
       } catch { /* fall back to the published site */ }
     }
 
+    // From a file:// page, or the read-only fallback, the notes are not next to the page:
+    // read them from the repo's raw file host (it allows cross-site reads).
+    let target = url;
+    if (sourceInfo().fallback || (global.location && global.location.protocol === "file:")) {
+      const r0 = detectRepo();
+      if (!r0) throw fail("no-config", "Could not work out which GitHub repo to read from.");
+      target = `https://raw.githubusercontent.com/${r0.owner}/${r0.repo}/${encodeURIComponent(cfg.branch || "HEAD")}/${url}`;
+    }
+
     let res;
     try {
-      res = await fetch(url, { cache: "no-cache" });
+      res = await fetch(target, { cache: "no-cache" });
     } catch {
       throw fail("network", "Could not load this note. Check your internet connection.");
     }
@@ -204,7 +240,7 @@
   }
 
   global.NotesData = {
-    loadData, resetData, loadNote, parseTree, detectRepo, refresh, source, root,
+    loadData, resetData, loadNote, parseTree, detectRepo, refresh, source, sourceInfo, root,
     setTokenProvider(fn) { tokenProvider = fn; },
   };
 })(typeof window !== "undefined" ? window : globalThis);
