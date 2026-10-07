@@ -40,6 +40,7 @@
     try {
       res = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}${path}`, {
         method,
+        cache: "no-store", // GitHub lets browsers cache GETs for ~1 minute: a stale branch head would hide the newest changes
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${token}`,

@@ -123,6 +123,7 @@ ${mode}};
     let res;
     try {
       res = await fetch(`https://api.github.com${path}`, {
+        cache: "no-cache", // always revalidate (a 304 costs no rate limit); never serve a stale branch
         headers: { Accept: "application/vnd.github+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
     } catch {
@@ -256,6 +257,7 @@ ${mode}};
       try {
         const ref = repo.branch ? `?ref=${encodeURIComponent(repo.branch)}` : "";
         const r = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${url}${ref}`, {
+          cache: "no-store",
           headers: { Accept: "application/vnd.github.raw+json", Authorization: `Bearer ${token}` },
         });
         if (r.ok) return r.text();
