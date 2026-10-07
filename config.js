@@ -7,5 +7,5 @@ window.NOTES_CONFIG = {
   owner: "aadija1n",
   repo: "sample-notes",
   branch: "main",
-  root: "notes",
+  root: "",
 };
