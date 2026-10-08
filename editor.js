@@ -27,6 +27,8 @@
   const dirOf = () => (s.path || "").slice(0, (s.path || "").lastIndexOf("/"));
 
   /* Blocks view needs the exact text; false (and a notice) when it cannot split it safely. */
+  const syncInsert = () => { if (global.NotesInsert) global.NotesInsert.refresh(); }; // 9C: the "+" bar follows the view
+
   function showBlocks(notice) {
     const text = s.ta.value;
     let ok = false;
@@ -46,6 +48,7 @@
     s.ta.hidden = true;
     s.host.hidden = false;
     s.toggle.textContent = "Source";
+    syncInsert();
     return true;
   }
 
@@ -55,6 +58,7 @@
     s.host.hidden = true;
     s.ta.hidden = false;
     s.toggle.textContent = "Blocks";
+    syncInsert();
     grow();
     s.ta.focus();
   }
@@ -78,6 +82,7 @@
   /* Removes the editor from the page and forgets the session (no callbacks). */
   function teardown() {
     if (!s) return;
+    if (global.NotesInsert) global.NotesInsert.detach();
     if (s.blocks) s.blocks.destroy();
     const note = s.root.closest(".note");
     if (note) note.classList.remove("editing");
@@ -162,6 +167,7 @@
     mount(container);
     if (showBlocks("This note uses syntax the block editor cannot split safely, so it opened as plain text.")) ta.hidden = true;
     else { s.host.hidden = true; s.toggle.hidden = true; ta.focus(); } // no block view for this note
+    if (global.NotesInsert) global.NotesInsert.attach(() => (s && s.view === "blocks" ? s.blocks : null));
     return true;
   }
 
@@ -173,7 +179,7 @@
     path: () => (s ? s.path : null),
     setPath(p) { if (s) s.path = p; },
     /* moves the live editor into a rebuilt page */
-    remount(container) { if (s) mount(container); },
+    remount(container) { if (s) { mount(container); syncInsert(); } },
     /* drops the editor without asking and without callbacks (the caller decided already) */
     close() { teardown(); },
   };

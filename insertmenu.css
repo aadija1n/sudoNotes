@@ -1,0 +1,62 @@
+/* Phase 9C: "+" insert bar and menu */
+
+/* the bar only exists while the editor is open (beats the .w-only rule in subject.css) */
+body.write:not(.ed-open) .add-bar.w-only { display: none !important; }
+
+/* Source view: the bar stays but is visibly disabled, with a short hint */
+body[data-ins="source"] .add-bar button { opacity: 0.55; cursor: not-allowed; }
+body[data-ins="source"] .add-bar button::after { content: "  Switch to Blocks to insert"; font-size: 13px; }
+
+/* menu (extends .menu from subject.css) */
+.ins-menu {
+  width: min(300px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ins-label {
+  padding: 10px 12px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ins-label:first-child { padding-top: 4px; }
+.ins-menu .ins-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+}
+.ins-hint { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
+.ins-chips { display: flex; gap: 6px; padding: 2px 6px 6px; }
+.ins-menu .ins-chip {
+  flex: 1;
+  width: auto;
+  min-height: 38px;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  text-align: center;
+  font-weight: 600;
+}
+.ins-menu button:focus-visible { background: rgba(138, 180, 255, 0.14); outline: none; }
+.ins-menu .ins-chip:focus-visible { border-color: var(--accent); }
+
+/* code-language dialog */
+.ins-langs { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 16px; }
+.ins-lang {
+  padding: 8px 12px;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.ins-lang:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.ins-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -2,7 +2,9 @@
    The note is split into top-level Markdown blocks (marked.lexer). Each block keeps its exact raw text; the join of
    all blocks must equal the original text byte for byte, otherwise block mode is refused. Editing a block changes only
    that block's body (its trailing blank-line gap is kept). Pure UI: the host (editor.js) owns staging and guards.
-   NotesBlocks.mount(container, { text, dir, onChange(text) }) -> { getText, setText, commit, setLocked, destroy } | null */
+   NotesBlocks.mount(container, { text, dir, onChange(text) }) -> { getText, setText, commit, setLocked, destroy,
+     insertAfterActive(text, { edit, caret }), activeIndex() } | null
+   Phase 9C: the handle can insert a new block after the block last edited or focused (insertmenu.js drives it). */
 
 (function (global) {
   /* Returns { lead, blocks: [{ body, gap }] } or null when the split is not byte-exact. */
@@ -62,6 +64,13 @@
     return splitLexer(text) || splitLines(text);
   }
 
+  /* 9C: a block inserted from a template that was left as only its starting marker is dropped, not kept */
+  const EMPTY_TEMPLATE = [
+    /^#{1,6}$/, /^(?:[-*+](?: \[[ xX]\])?|\d+[.)]|>)$/,
+    /^(`{3,}|~{3,})[^\n`]*\n(?:[ \t]*\n)*[ \t]*\1$/, /^<div>\s*<\/div>$/i,
+  ];
+  const isEmptyTemplate = (t) => EMPTY_TEMPLATE.some((re) => re.test(t));
+
   function mount(container, opts) {
     const parsed = split(opts.text || "");
     if (!parsed) return null;
@@ -71,6 +80,7 @@
     let ed = null;              // { blk, wrap, ta, view, isNew }
     let locked = false;
     let ignoreClickUntil = 0;
+    let active = null;          // 9C: the block most recently edited or focused (insert position)
 
     const root = document.createElement("div");
     root.className = "blocks";
@@ -115,7 +125,7 @@
     }
 
     /* ---- start / end of a block edit ---- */
-    function startEdit(blk, wrap, isNew) {
+    function startEdit(blk, wrap, isNew, init) {
       if (locked) return;
       const view = isNew ? null : wrap.firstChild;
       const ta = document.createElement("textarea");
@@ -123,8 +133,9 @@
       ta.spellcheck = false;
       ta.setAttribute("autocapitalize", "off");
       ta.setAttribute("aria-label", "Block text (Markdown)");
-      ta.value = blk.body;
-      ed = { blk, wrap, ta, view, isNew };
+      ta.value = init && typeof init.text === "string" ? init.text : blk.body;
+      ed = { blk, wrap, ta, view, isNew, before: init && init.before || null };
+      if (!isNew) active = blk;
       wrap.classList.add("editing");
       wrap.removeAttribute("title");
       wrap.replaceChildren(ta);
@@ -136,17 +147,28 @@
       });
       grow(ta);
       ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      const c = init && Number.isInteger(init.caret) ? Math.max(0, Math.min(init.caret, ta.value.length)) : ta.value.length;
+      ta.setSelectionRange(c, c);
     }
 
-    function newBlockEdit() {
+    /* init (9C): { text, caret, at } opens the new block at position `at` with a starting template */
+    function newBlockEdit(init) {
       if (locked) return;
       const blk = { body: "", gap: "\n", wrap: null };
       const wrap = document.createElement("div");
       wrap.className = "blk";
       blk.wrap = wrap;
-      root.insertBefore(wrap, addSlot);
-      startEdit(blk, wrap, true);
+      const before = init && Number.isInteger(init.at) ? blocks[init.at] || null : null;
+      root.insertBefore(wrap, before && before.wrap && before.wrap.parentNode === root ? before.wrap : addSlot);
+      startEdit(blk, wrap, true, { text: init && init.text, caret: init && init.caret, before });
+    }
+
+    /* puts a finished block into the list at `at` with one blank line around it */
+    function placeBlock(blk, at) {
+      const prev = blocks[at - 1];
+      if (prev && !/\n[ \t]*\n/.test(prev.gap)) prev.gap = "\n\n";
+      if (at < blocks.length) blk.gap = "\n\n";
+      blocks.splice(at, 0, blk);
     }
 
     function cancelEdit() {
@@ -177,14 +199,15 @@
       const idx = blocks.indexOf(blk);
 
       if (e.isNew) {
-        if (!text) { e.wrap.remove(); return; }
-        const prev = blocks[blocks.length - 1];
-        if (prev && !/\n[ \t]*\n/.test(prev.gap)) prev.gap = "\n\n"; // one blank line between blocks
+        if (!text || isEmptyTemplate(text)) { e.wrap.remove(); return; }
+        const ix = e.before ? blocks.indexOf(e.before) : -1;
         blk.body = text;
-        blocks.push(blk);
+        placeBlock(blk, ix === -1 ? blocks.length : ix); // one blank line between blocks
+        active = blk;
         finishChange(blk, e.wrap);
         return;
       }
+      active = blk;
       if (text === blk.body) { // unchanged: put the old render back
         e.wrap.classList.remove("editing");
         e.wrap.title = "Click to edit";
@@ -194,6 +217,7 @@
       if (!text) { // emptied: remove the block (the last one hands its ending to the previous block)
         if (idx === blocks.length - 1 && idx > 0) blocks[idx - 1].gap = blk.gap;
         blocks.splice(idx, 1);
+        active = blocks[idx - 1] || null;
         e.wrap.remove();
         changed();
         return;
@@ -208,6 +232,7 @@
       const sub = split(blk.body + blk.gap);
       if (sub && sub.lead === "" && sub.blocks.length > 1) {
         blocks.splice(idx, 1, ...sub.blocks);
+        active = sub.blocks[sub.blocks.length - 1];
         const wraps = sub.blocks.map(makeWrap);
         wrap.replaceWith(...wraps);
       } else {
@@ -258,17 +283,46 @@
       else if (e.target.classList.contains("blk")) { const b = blkOf(e.target); if (b) { e.preventDefault(); startEdit(b, e.target, false); } }
     });
 
+    root.addEventListener("focusin", (e) => { // 9C: keyboard focus on a rendered block also sets the insert position
+      const w = e.target.closest && e.target.closest(".blk");
+      if (!w || (ed && w === ed.wrap)) return;
+      const b = blkOf(w);
+      if (b) active = b;
+    });
+
     build();
 
     return {
       getText,
       commit,
+      activeIndex() { return active ? blocks.indexOf(active) : -1; },
+      /* 9C: inserts `text` as a new block after the active block (or at the end). edit:false adds it finished;
+         otherwise it opens in the block editor with the caret at `caret` (default: the end). */
+      insertAfterActive(text, o) {
+        o = o || {};
+        if (locked) return false;
+        commit();
+        const ai = active ? blocks.indexOf(active) : -1;
+        const at = ai === -1 ? blocks.length : ai + 1;
+        if (o.edit !== false) { newBlockEdit({ text: text || "", caret: o.caret, at }); return true; }
+        const body = String(text || "").replace(/^\n+/, "").replace(/\s+$/, "");
+        if (!body) return false;
+        const blk = { body, gap: "\n", wrap: null };
+        placeBlock(blk, at);
+        const wrap = makeWrap(blk);
+        const next = blocks[at + 1];
+        root.insertBefore(wrap, next && next.wrap ? next.wrap : addSlot);
+        active = blk;
+        changed();
+        if (wrap.scrollIntoView) wrap.scrollIntoView({ block: "nearest" });
+        return true;
+      },
       setLocked(on) { locked = !!on; root.classList.toggle("locked", locked); },
       /* replaces the whole text; false (nothing changed) if it cannot be split byte-exactly */
       setText(text) {
         const p = split(text);
         if (!p) return false;
-        ed = null;
+        ed = null; active = null;
         lead = p.lead; blocks = p.blocks;
         build();
         return true;
