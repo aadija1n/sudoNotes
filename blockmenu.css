@@ -1,0 +1,73 @@
+/* Phase 9D: block menu handle, menu, undo notice, "shown as source" view */
+
+/* ⋮ handle: in the left gutter, shown on hover / focus; always shown on touch */
+.blk > .blk-handle {
+  position: absolute;
+  top: 4px;
+  left: -30px;
+  width: 24px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), background 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.blk:hover > .blk-handle,
+.blk:focus-within > .blk-handle,
+.blk > .blk-handle:focus-visible,
+.blk > .blk-handle[aria-expanded="true"] { opacity: 1; }
+.blk > .blk-handle:hover,
+.blk > .blk-handle[aria-expanded="true"] { background: var(--surface-hover); border-color: var(--border); color: var(--text); }
+.blk > .blk-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* touch and narrow screens: the handle sits at the right edge, inside the block's own padding */
+@media (pointer: coarse) { .blk > .blk-handle { opacity: 1; width: 36px; height: 36px; } }
+@media (pointer: coarse), (max-width: 900px) {
+  .blocks .blk:not(.editing) { padding-right: 40px; }
+  .blk > .blk-handle { left: auto; right: 4px; }
+}
+
+/* menu (extends .menu from subject.css) */
+.blk-menu { z-index: 60; min-width: 170px; }
+.blk-menu button:focus-visible { background: rgba(138, 180, 255, 0.14); outline: none; }
+
+/* undo notice after Delete */
+.blk-undo {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 10px 8px 16px;
+  background: #1f1f27;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  animation: toast-in 0.25s var(--ease);
+}
+.blk-undo button {
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.blk-undo button:hover { background: rgba(138, 180, 255, 0.12); }
+
+/* a block whose render is empty shows its source, dimmed, with a hint */
+.blk-rawbox .blk-raw { opacity: 0.75; }
+.blk-rawhint { margin-top: 2px; color: var(--text-muted); font-size: 12px; opacity: 0.8; }

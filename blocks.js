@@ -95,15 +95,36 @@
     const getText = () => lead + blocks.map((b) => b.body + b.gap).join("");
     const changed = () => { if (opts.onChange) opts.onChange(getText()); };
 
+    /* Part 1 fix: a block must never look empty. ">>" is an empty nested quote and unknown HTML is stripped by the
+       sanitizer, so the render can come out with nothing visible; then the raw source is shown instead. */
+    const VISIBLE = "img, hr, svg, table, input, video, audio, iframe, canvas, picture, object, embed, .mermaid-box";
+    function rawView(body, hint) {
+      const box = document.createElement("div");
+      box.className = "blk-rawbox";
+      const pre = document.createElement("pre");
+      pre.className = "blk-raw";
+      pre.textContent = body;
+      const h = document.createElement("div");
+      h.className = "blk-rawhint";
+      h.textContent = hint;
+      box.append(pre, h);
+      return box;
+    }
+
     function renderBody(body) {
-      try { return global.NotesRender.toElement(body, dirNow()); }
+      let el;
+      try { el = global.NotesRender.toElement(body, dirNow()); }
       catch {
         const pre = document.createElement("pre");
         pre.className = "blk-raw";
         pre.textContent = body;
         return pre;
       }
+      if (!body.trim() || el.textContent.trim() || el.querySelector(VISIBLE)) return el;
+      return rawView(body, "shown as source: this renders as nothing");
     }
+
+    const decorate = (wrap) => { if (global.NotesBlockMenu) global.NotesBlockMenu.decorate(wrap); }; // 9D: the ⋮ handle
 
     function makeWrap(blk) {
       const wrap = document.createElement("div");
@@ -111,6 +132,7 @@
       wrap.tabIndex = 0;
       wrap.title = "Click to edit";
       wrap.replaceChildren(renderBody(blk.body));
+      decorate(wrap);
       blk.wrap = wrap;
       return wrap;
     }
@@ -178,6 +200,7 @@
       e.wrap.classList.remove("editing");
       e.wrap.title = "Click to edit";
       e.wrap.replaceChildren(e.view);
+      decorate(e.wrap);
     }
 
     /* Ctrl+Enter: commit this block and open the next one (after the last block: a new empty block) */
@@ -212,6 +235,7 @@
         e.wrap.classList.remove("editing");
         e.wrap.title = "Click to edit";
         e.wrap.replaceChildren(e.view);
+        decorate(e.wrap);
         return;
       }
       if (!text) { // emptied: remove the block (the last one hands its ending to the previous block)
@@ -239,6 +263,7 @@
         wrap.className = "blk";
         wrap.title = "Click to edit";
         wrap.replaceChildren(renderBody(blk.body));
+        decorate(wrap);
       }
       changed();
     }
@@ -248,6 +273,7 @@
 
     root.addEventListener("mousedown", (e) => {
       if (locked || !ed || e.button !== 0) return;
+      if (e.target.closest(".blk-handle")) return; // 9D: the ⋮ handle never starts an edit
       const wrap = e.target.closest(".blk");
       const onSlot = e.target.closest(".blk-add");
       if (wrap && wrap === ed.wrap) return; // inside the textarea: normal behaviour
@@ -266,7 +292,7 @@
     root.addEventListener("click", (e) => {
       const wrap = e.target.closest(".blk");
       const onSlot = e.target.closest(".blk-add");
-      if (e.target.closest(".copy-btn")) return;
+      if (e.target.closest(".copy-btn") || e.target.closest(".blk-handle")) return;
       if (wrap && !wrap.classList.contains("editing")) e.preventDefault(); // links/summaries must not act while editing
       if (locked || Date.now() < ignoreClickUntil) return;
       if (onSlot) { if (!ed) newBlockEdit(); return; }
@@ -283,6 +309,21 @@
       else if (e.target.classList.contains("blk")) { const b = blkOf(e.target); if (b) { e.preventDefault(); startEdit(b, e.target, false); } }
     });
 
+    /* 9D: Alt+Up / Alt+Down move the block being edited or focused */
+    root.addEventListener("keydown", (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || locked) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      const w = e.target.closest && e.target.closest(".blk");
+      if (!w) return;
+      e.preventDefault();
+      const wasNew = ed && ed.wrap === w && ed.isNew;
+      const n = blocks.length;
+      commit();
+      if (wasNew && blocks.length === n) return; // the empty new block was dropped: nothing to move
+      const b = (!wasNew && blkOf(w)) || active;
+      if (b) api.moveBlock(blocks.indexOf(b), e.key === "ArrowUp" ? -1 : 1);
+    });
+
     root.addEventListener("focusin", (e) => { // 9C: keyboard focus on a rendered block also sets the insert position
       const w = e.target.closest && e.target.closest(".blk");
       if (!w || (ed && w === ed.wrap)) return;
@@ -292,8 +333,83 @@
 
     build();
 
-    return {
+    /* 9D: block operations. Indexes refer to the current block list; commit() runs first, so take an index
+       with blockIndex(wrap) (which commits) rather than keeping one across an open edit. */
+    const inRange = (i) => Number.isInteger(i) && i >= 0 && i < blocks.length;
+    const hasBlank = (g) => /\n[ \t]*\n/.test(g);
+    function syncDom() { blocks.forEach((b) => root.insertBefore(b.wrap, addSlot)); }
+
+    const api = {
       getText,
+      commit,
+      count() { return blocks.length; },
+      blockIndex(wrap) { commit(); return blocks.findIndex((b) => b.wrap === wrap); },
+      /* swaps the two bodies; the whitespace after each position (incl. the file ending) stays where it is.
+         A gap without a blank line is widened so a moved paragraph cannot merge into its neighbour. */
+      moveBlock(i, dir) {
+        if (locked) return false;
+        commit();
+        const j = i + dir;
+        if (Math.abs(dir) !== 1 || !inRange(i) || !inRange(j)) return false;
+        const a = blocks[i], b = blocks[j];
+        const g = a.gap; a.gap = b.gap; b.gap = g;
+        blocks[i] = b; blocks[j] = a;
+        for (const k of [Math.min(i, j), Math.max(i, j)]) {
+          if (k < blocks.length - 1 && !hasBlank(blocks[k].gap)) blocks[k].gap = "\n\n";
+        }
+        active = a;
+        syncDom();
+        changed();
+        a.wrap.focus({ preventScroll: true });
+        if (a.wrap.scrollIntoView) a.wrap.scrollIntoView({ block: "nearest" });
+        return true;
+      },
+      duplicateBlock(i) {
+        if (locked) return false;
+        commit();
+        if (!inRange(i)) return false;
+        const src = blocks[i];
+        const copy = { body: src.body, gap: "\n\n", wrap: null };
+        if (i === blocks.length - 1) { copy.gap = src.gap; src.gap = "\n\n"; } // the file ending moves to the new last block
+        placeBlock(copy, i + 1);
+        const wrap = makeWrap(copy);
+        root.insertBefore(wrap, src.wrap.nextSibling);
+        active = copy;
+        changed();
+        if (wrap.scrollIntoView) wrap.scrollIntoView({ block: "nearest" });
+        return true;
+      },
+      /* removes the block like an emptied one; returns a record for restoreBlock, or null */
+      deleteBlock(i) {
+        if (locked) return null;
+        commit();
+        if (!inRange(i)) return null;
+        const blk = blocks[i];
+        const wasLast = i === blocks.length - 1 && i > 0;
+        const rec = { index: i, body: blk.body, gap: blk.gap, wasLast, prevGap: wasLast ? blocks[i - 1].gap : "" };
+        if (wasLast) blocks[i - 1].gap = blk.gap;
+        blocks.splice(i, 1);
+        active = blocks[i - 1] || blocks[i] || null;
+        blk.wrap.remove();
+        changed();
+        return rec;
+      },
+      /* puts a deleted block back at its old position with its exact text and gap */
+      restoreBlock(rec) {
+        if (locked || !rec) return false;
+        commit();
+        const at = Math.min(rec.index, blocks.length);
+        if (rec.wasLast && at === blocks.length && at > 0) blocks[at - 1].gap = rec.prevGap;
+        const blk = { body: rec.body, gap: rec.gap, wrap: null };
+        blocks.splice(at, 0, blk);
+        const wrap = makeWrap(blk);
+        const next = blocks[at + 1];
+        root.insertBefore(wrap, next && next.wrap ? next.wrap : addSlot);
+        active = blk;
+        changed();
+        if (wrap.scrollIntoView) wrap.scrollIntoView({ block: "nearest" });
+        return true;
+      },
       commit,
       activeIndex() { return active ? blocks.indexOf(active) : -1; },
       /* 9C: inserts `text` as a new block after the active block (or at the end). edit:false adds it finished;
@@ -327,8 +443,10 @@
         build();
         return true;
       },
-      destroy() { ed = null; root.remove(); },
+      destroy() { ed = null; if (global.NotesBlockMenu) global.NotesBlockMenu.unbind(root); root.remove(); },
     };
+    if (global.NotesBlockMenu) global.NotesBlockMenu.bind(root, api);
+    return api;
   }
 
   global.NotesBlocks = { mount, split: (t) => !!split(t) };
