@@ -3,8 +3,8 @@
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
-  subject: [["Insert new chapter", 6], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
-  chapter: [["Add topic", 8], ["Rename chapter", 6], ["Change number", 6], ["Move up", 7], ["Move down", 7], ["Delete chapter", 6, "danger"]],
+  subject: [["Insert new chapter", 0, "", "chapter:add"], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
+  chapter: [["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Delete chapter", 0, "danger", "chapter:delete"]],
   topic: [["Rename", 8], ["Move up", 8], ["Move down", 8], ["Delete", 8, "danger"]],
 };
 
@@ -76,6 +76,8 @@ function openMenu(btn, type) {
   menuEl = document.createElement("div");
   menuEl.className = "menu";
   menuEl.dataset.owner = btn.dataset.uid;
+  const chapterEl = btn.closest(".chapter");
+  menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : ""; // which chapter a chapter menu acts on
   menuEl.setAttribute("role", "menu");
   menuEl.innerHTML = MENUS[type]
     .map(([label, phase, cls, action]) => `<button role="menuitem" class="${cls || ""}" data-phase="${phase}" data-action="${action || ""}" data-label="${esc(label)}">${esc(label)}</button>`)
@@ -258,7 +260,7 @@ function buildSubject(found) {
   const enc = encodeURIComponent(name);
 
   const chapters = found.chapters.map((ch) => `
-    <div class="chapter" data-ch="${ch.num}">
+    <div class="chapter" data-ch="${ch.num}" data-folder="${esc(ch.folder)}">
       <div class="chapter-row">
         <button class="chapter-btn" aria-expanded="false">
           <span class="chev">›</span><span>Chapter ${pad(ch.num)} - ${esc(ch.name)}</span>
@@ -723,7 +725,7 @@ function dialog({ title, sub, input, confirm, danger, onSubmit }) {
       <h2 id="m-title">${esc(title)}</h2>
       <p class="modal-sub">${sub}</p>
       ${input ? `<label class="field"><span>${esc(input.label)}</span>
-        <input name="value" value="${esc(input.value || "")}" placeholder="${esc(input.placeholder || "")}" maxlength="120" spellcheck="false" /></label>` : ""}
+        <input name="value" value="${esc(input.value || "")}" placeholder="${esc(input.placeholder || "")}" maxlength="120" spellcheck="false"${input.inputmode ? ` inputmode="${esc(input.inputmode)}"` : ""} /></label>` : ""}
       <p class="form-error" role="alert"></p>
       <div class="modal-actions">
         <button type="button" class="btn" data-modal-close>Cancel</button>
@@ -877,9 +879,151 @@ function deleteSubjectDialog() {
   });
 }
 
+/* ---------- chapters (Phase 6) ---------- */
+const chapterByFolder = (folder) => (subj ? subj.chapters.find((c) => c.folder === folder) : null);
+const chapterLabel = (ch) => `Chapter ${pad(ch.num)} - ${esc(ch.name)}`;
+const topicChapterNum = (id) => (id ? parseInt(String(id).split(".")[0], 10) : NaN);
+
+function openChapterNum() {
+  const el = document.querySelector(".chapter.open");
+  return el ? parseInt(el.dataset.ch, 10) : null;
+}
+
+function numberValidator(usedByOthers, current) {
+  return (value) => {
+    const v = String(value).trim();
+    if (!v) return " ";
+    if (!/^\d+$/.test(v)) return "Enter a whole number, 0 or higher.";
+    if (v.length > 6) return "That number is too large.";
+    const n = parseInt(v, 10);
+    if (n === current) return " ";
+    if (usedByOthers.has(n)) return `Chapter ${pad(n)} already exists. Pick a number that is not used yet.`;
+    return "";
+  };
+}
+
+/* Rebuilds the subject page from the fresh data without a reload: sets the address to `topicId`,
+   keeps the mobile drawer and the index scroll position, and opens chapter `openNum` (one at a time). */
+async function showSubjectAfterSave({ topicId, openNum }) {
+  const name = subj.name;
+  try {
+    history.replaceState(null, "", `${location.pathname}${location.search}#/subject/${encodeURIComponent(name)}${topicId ? `/${topicId}` : ""}`);
+    const found = DATA && DATA.subjects.find((s) => s.name === name);
+    if (!found) throw new Error("fresh data not available");
+    const index = document.getElementById("index");
+    const drawerOpen = !!(index && index.classList.contains("open"));
+    const list = index && index.querySelector(".chapters");
+    const scroll = list ? list.scrollTop : 0;
+    buildSubject(found);
+    setDrawer(drawerOpen);
+    await showTopic(topicId || null);
+    if (openNum != null) {
+      const el = document.querySelector(`.chapter[data-ch="${CSS.escape(String(openNum))}"]`);
+      if (el) {
+        document.querySelectorAll(".chapter.open").forEach((c) => setChapterOpen(c, false));
+        setChapterOpen(el, true);
+      }
+    }
+    const nav = document.querySelector(".chapters");
+    if (nav) nav.scrollTop = scroll;
+    const opened = document.querySelector(".chapter.open");
+    if (opened && openNum != null) opened.scrollIntoView({ block: "nearest" });
+  } catch {
+    currentSubject = null; // the save worked; just load everything again from the repo
+    route();
+  }
+}
+
+function addChapterDialog() {
+  const subjectName = subj.name;
+  dialog({
+    title: "Insert new chapter",
+    sub: `Give the chapter a name. Its number is chosen automatically (the first chapter is <b>00</b>, then one more than the highest existing number).`,
+    input: { label: "Chapter name", placeholder: "e.g. Introduction", validate: nameValidator([]) },
+    confirm: "Create chapter",
+    onSubmit: async (name) => {
+      const result = await NotesWrite.addChapter(subjectName, name);
+      await applySave(result);
+      toast(`Chapter ${pad(result.num)} created`);
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
+    },
+  });
+}
+
+function renameChapterDialog(folder) {
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  dialog({
+    title: "Rename chapter",
+    sub: `Only the name of <b>${chapterLabel(ch)}</b> changes. Its number and its topics stay the same.`,
+    input: { label: "Chapter name", value: ch.name, validate: nameValidator([], ch.name) },
+    confirm: "Rename",
+    onSubmit: async (name) => {
+      const openNum = openChapterNum();
+      await applySave(await NotesWrite.renameChapter(subjectName, folder, name));
+      toast("Chapter renamed");
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum }); // topic ids do not change, so the open note stays open
+    },
+  });
+}
+
+function changeChapterNumberDialog(folder) {
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  const oldNum = ch.num;
+  const used = new Set(subj.chapters.filter((c) => c !== ch).map((c) => c.num));
+  dialog({
+    title: "Change chapter number",
+    sub: `Choose a new number for <b>${chapterLabel(ch)}</b>. Numbers must be unique. The ${plural(ch.topics.length, "topic")} inside will be renamed to match (for example ${oldNum}.1 becomes the new number followed by .1).`,
+    input: { label: "New chapter number", value: pad(oldNum), inputmode: "numeric", validate: numberValidator(used, oldNum) },
+    confirm: "Change number",
+    onSubmit: async (value) => {
+      const newNum = parseInt(value, 10);
+      const openNum = openChapterNum();
+      await applySave(await NotesWrite.changeChapterNumber(subjectName, folder, newNum));
+
+      // topic ids and addresses start with the chapter number, so follow the open topic and the remembered one
+      const renumber = (id) => (topicChapterNum(id) === oldNum ? `${newNum}.${String(id).split(".")[1]}` : id);
+      const last = store.get(lastTopicKey(subjectName));
+      if (last && renumber(last) !== last) store.set(lastTopicKey(subjectName), renumber(last));
+      toast("Chapter number changed");
+      await showSubjectAfterSave({ topicId: renumber(currentTopicId), openNum: openNum === oldNum ? newNum : openNum });
+    },
+  });
+}
+
+function deleteChapterDialog(folder) {
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  const oldNum = ch.num;
+  dialog({
+    title: "Delete this chapter?",
+    sub: `<b>${chapterLabel(ch)}</b> will be removed along with ${plural(ch.topics.length, "topic")}. You can still recover it from your repo's commit history.`,
+    confirm: "Delete chapter",
+    danger: true,
+    onSubmit: async () => {
+      const openNum = openChapterNum();
+      await applySave(await NotesWrite.deleteChapter(subjectName, folder));
+
+      const last = store.get(lastTopicKey(subjectName));
+      if (last && topicChapterNum(last) === oldNum) { try { localStorage.removeItem(lastTopicKey(subjectName)); } catch { /* storage unavailable */ } }
+      const gone = topicChapterNum(currentTopicId) === oldNum;
+      toast("Chapter deleted");
+      await showSubjectAfterSave({ topicId: gone ? null : currentTopicId, openNum: openNum === oldNum ? null : openNum });
+    },
+  });
+}
+
 const ACTIONS = {
   "subject:rename": renameSubjectDialog,
   "subject:delete": deleteSubjectDialog,
+  "chapter:add": addChapterDialog,
+  "chapter:rename": renameChapterDialog,
+  "chapter:number": changeChapterNumberDialog,
+  "chapter:delete": deleteChapterDialog,
 };
 
 /* ---------- events (delegated) ---------- */
@@ -889,8 +1033,9 @@ document.addEventListener("click", (e) => {
   const menuItem = t.closest(".menu button");
   if (menuItem) {
     const action = ACTIONS[menuItem.dataset.action];
+    const folder = menuEl ? menuEl.dataset.folder || "" : ""; // read before the menu is removed
     closeMenu();
-    if (action) action();
+    if (action) action(folder);
     else toast(`"${menuItem.dataset.label}" arrives in Phase ${menuItem.dataset.phase}`);
     return;
   }
