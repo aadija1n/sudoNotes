@@ -48,7 +48,7 @@ test("read mode shows nothing; write mode needs login", async () => {
   const gh = new FakeGH(BASE);
   const app = await boot({ gh, hash: "#/subject/Math" });
   ok(!app.d.body.classList.contains("write"), "read mode: body.write absent");
-  ok(!app.savebar(), "read mode: no save bar");
+  ok(!app.pending(), "read mode: no save bar");
   eq(app.folders().length, 4, "4 chapters shown");
   ok(!app.beforeUnloadPrevented(), "read mode: beforeunload not registered");
   ok(app.qa(".dots").every((b) => b.classList.contains("w-only")), "all menus are w-only (hidden in read mode by CSS)");
@@ -68,7 +68,7 @@ test("many edits then ONE save = exactly one commit; local mode gives the same t
   ok(app.beforeUnloadPrevented(), "beforeunload registered while pending");
   eq(app.folders(), ["Chapter 00 - Core", "Chapter 01 - Intro", "Chapter 02 - Last", "Chapter 03 - Extra"], "index shows the virtual tree instantly");
   app.click("#sb-save");
-  await app.waitFor(() => !app.savebar());
+  await app.waitFor(() => !app.pending());
   await app.settle();
   eq(gh.counts.commitPost, 1, "exactly one commit");
   eq(gh.counts.treePost, 1, "exactly one tree");
@@ -79,7 +79,7 @@ test("many edits then ONE save = exactly one commit; local mode gives the same t
   const final = gh.files();
   eq([...final.keys()].sort(), Object.keys(EXPECTED_MATH).sort(), "final tree paths");
   for (const [p, c] of Object.entries(EXPECTED_MATH)) eq(final.get(p), c, "content kept: " + p);
-  ok(!app.savebar(), "save bar gone after save");
+  ok(!app.pending(), "save bar gone after save");
   ok(!app.beforeUnloadPrevented(), "beforeunload removed after save");
   ok(app.toasts().includes("Saved"), "toast Saved: " + app.toasts());
   ok(Object.keys(EXPECTED_MATH).every((p) => final.has(p)), "ok");
@@ -91,12 +91,12 @@ test("many edits then ONE save = exactly one commit; local mode gives the same t
   await lapp.subjectMenu("Insert new chapter"); await lapp.submitDialog("Extra");
   const afterFirst = await folderFiles(folder.root);
   ok(afterFirst.has("notes/Math/Chapter 04 - Extra/.gitkeep"), "local: first change written immediately");
-  ok(!lapp.savebar(), "local: no save bar");
+  ok(!lapp.pending(), "local: no save bar");
   await lapp.menuAction("Chapter 01 - Basics", "Rename chapter"); await lapp.submitDialog("Core");
   await lapp.menuAction("Chapter 01 - Core", "Move up");
   await lapp.menuAction("Chapter 02 - Middle", "Delete chapter"); await lapp.submitDialog();
   eq(lapp.count(), 0, "local: nothing staged");
-  ok(!lapp.savebar(), "local: still no save bar");
+  ok(!lapp.pending(), "local: still no save bar");
   eq(mapOf(await folderFiles(folder.root)), mapOf(new Map(Object.entries(EXPECTED_MATH))), "local mode final tree == github mode final tree");
 });
 
@@ -118,7 +118,7 @@ test("Undo last and Discard", async () => {
   eq(app.count(), 1, "cancel keeps the change");
   app.click("#sb-discard"); await app.settle(20);
   await app.submitDialog();
-  await app.waitFor(() => !app.savebar());
+  await app.waitFor(() => !app.pending());
   eq(app.count(), 0, "discard clears everything");
   eq(app.folders(), ["Chapter 00 - Intro", "Chapter 01 - Basics", "Chapter 02 - Middle", "Chapter 03 - Last"], "view back to saved state");
   ok(!app.beforeUnloadPrevented(), "beforeunload removed after discard");
@@ -131,7 +131,7 @@ test("save with unchanged head takes the fast path (no replay, no merge message)
   await app.login();
   await app.subjectMenu("Insert new chapter"); await app.submitDialog("Extra");
   app.click("#sb-save");
-  await app.waitFor(() => !app.savebar()); await app.settle();
+  await app.waitFor(() => !app.pending()); await app.settle();
   ok(app.toasts().includes("Saved"), "plain 'Saved' toast");
   ok(!app.toasts().some((t) => /merged/.test(t)), "no merge message");
   ok(gh.files().has("notes/Math/Chapter 04 - Extra/.gitkeep"), "chapter committed");
@@ -144,7 +144,7 @@ test("save after the head changed: replay applies, commit lands on top, merged m
   await app.subjectMenu("Insert new chapter"); await app.submitDialog("Extra");
   const ext = gh.external([{ path: "notes/Physics/Chapter 01 - Waves/1.1 W.md", content: "W body" }]);
   app.click("#sb-save");
-  await app.waitFor(() => !app.savebar()); await app.settle();
+  await app.waitFor(() => !app.pending()); await app.settle();
   ok(app.toasts().some((t) => /merged with newer changes/.test(t)), "merged toast: " + app.toasts());
   const final = gh.files();
   ok(final.has("notes/Physics/Chapter 01 - Waves/1.1 W.md"), "external change kept");
@@ -171,7 +171,7 @@ test("replay with a failing operation commits nothing and says why", async () =>
   eq(gh.counts.commitPost, 0, "no commit object created either");
   eq(app.count(), 2, "pending list kept");
   app.click("#modal [data-modal-close]"); await app.settle(10);
-  ok(app.savebar(), "save bar still there after Cancel");
+  ok(app.pending(), "save bar still there after Cancel");
   app.click("#sb-save");
   await app.waitFor(() => app.q("#rf-discard"));
   app.click("#rf-discard"); await app.settle(60);
@@ -187,7 +187,7 @@ test("branch moves between replay and ref update: retried automatically; gives u
   await app.subjectMenu("Insert new chapter"); await app.submitDialog("Extra");
   gh.failPatch = 1;
   app.click("#sb-save");
-  await app.waitFor(() => !app.savebar()); await app.settle();
+  await app.waitFor(() => !app.pending()); await app.settle();
   eq(gh.counts.refPatch, 2, "ref update tried twice");
   eq(ourCommits(gh).length, 1, "one commit of ours on the branch");
   ok(gh.files().has("notes/_race1.txt") && gh.files().has("notes/Math/Chapter 04 - Extra/.gitkeep"), "race change kept and ours added");
@@ -199,13 +199,13 @@ test("branch moves between replay and ref update: retried automatically; gives u
   await app2.subjectMenu("Insert new chapter"); await app2.submitDialog("Extra");
   gh2.failPatch = 3;
   app2.click("#sb-save");
-  await app2.waitFor(() => /busy/.test(app2.q("#savebar .sb-msg").textContent));
+  await app2.waitFor(() => /busy/.test(app2.q(".dock .dock-msg").textContent));
   eq(gh2.counts.refPatch, 3, "gave up after 3 attempts");
   eq(ourCommits(gh2).length, 0, "no commit of ours");
   eq(app2.count(), 1, "change still pending (never lost)");
-  ok(/Save/.test(app2.sbText()), "bar still offers Save");
+  ok(/Save/.test(app2.sbText()), "dock still offers Save");
   app2.click("#sb-save"); // head is stable now: works
-  await app2.waitFor(() => !app2.savebar());
+  await app2.waitFor(() => !app2.pending());
   eq(ourCommits(gh2).length, 1, "second try succeeds");
 });
 
@@ -230,7 +230,7 @@ test("move up/down swaps numbers and topic files (equal names, gaps, edges)", as
   ok(virtualTopics.includes("0.1 b") && virtualTopics.includes("0.2 c") && virtualTopics.includes("1.1 a"), "virtual topics swapped: " + virtualTopics);
   await app.menuAction("Chapter 05 - Gap", "Move up"); // swaps with the adjacent chapter (01), not number 04
   eq(app.count(), 2, "two operations pending");
-  app.click("#sb-save"); await app.waitFor(() => !app.savebar()); await app.settle();
+  app.click("#sb-save"); await app.waitFor(() => !app.pending()); await app.settle();
   eq(ourCommits(gh).length, 1, "single commit");
   eq([...gh.files().entries()].sort(), [
     ["notes/Eq/Chapter 00 - Same/0.1 b.md", "b"],
@@ -258,7 +258,7 @@ test("delete a middle chapter renumbers later chapters and their topic files, on
   ok(app.q(".topic.active") && app.q(".topic.active").textContent === "2.1 L", "active topic highlighted");
   eq(app.d.defaultView.localStorage.getItem("notes:lastTopic:Math"), "2.1", "last-opened record followed");
   eq(gh.counts.commitPost, 0, "still nothing committed");
-  app.click("#sb-save"); await app.waitFor(() => !app.savebar()); await app.settle();
+  app.click("#sb-save"); await app.waitFor(() => !app.pending()); await app.settle();
   eq(ourCommits(gh).length, 1, "single commit");
   eq([...gh.files().keys()].filter((p) => p.startsWith("notes/Math/")).sort(), [
     "notes/Math/Chapter 00 - Intro/0.1 A.md", "notes/Math/Chapter 00 - Intro/0.2 B.md",
@@ -340,7 +340,7 @@ test("in-app exit dialog: back to R (Cancel / Discard / Save) and Change notes r
   app.click('.mode-btn[data-mode="r"]'); await app.settle(10);
   app.click('[data-lv="discard"]'); await app.waitFor(() => !app.d.body.classList.contains("write"));
   eq(app.count(), 0, "Discard clears the list");
-  ok(!app.savebar() && !app.beforeUnloadPrevented(), "bar and beforeunload gone");
+  ok(!app.pending() && !app.beforeUnloadPrevented(), "bar and beforeunload gone");
   eq(gh.counts.commitPost, 0, "nothing committed by Discard");
   // Save choice
   await app.login();
@@ -353,7 +353,7 @@ test("in-app exit dialog: back to R (Cancel / Discard / Save) and Change notes r
   await app.go("#/"); await app.login();
   await app.w.NotesWrite.run("addSubject", { name: "Chem" });
   await app.settle(10);
-  ok(app.savebar(), "save bar also on the home page");
+  ok(app.pending(), "save bar also on the home page");
   app.click("#set-repo"); await app.settle(10);
   ok(/unsaved changes/.test((app.q("#modal") || {}).textContent || ""), "dialog shown before changing the notes repository");
   ok(!app.q('#modal input[name="repo"]'), "repository form not opened yet");
@@ -371,7 +371,7 @@ test("lock keeps descriptors in sessionStorage; restore after login (and after a
   ok(raw && !/token/i.test(raw), "descriptors stored, no token in them");
   app.w.setMode("r"); await app.settle(30); // what the 30-minute idle lock does
   eq(app.count(), 0, "memory cleared on lock");
-  ok(!app.savebar(), "no save bar in read mode");
+  ok(!app.pending(), "no save bar in read mode");
   ok(app.w.sessionStorage.getItem("notes:pending"), "descriptors kept for restore");
   await app.login();
   await app.waitFor(() => /Restore unsaved changes/.test((app.q("#modal") || {}).textContent || ""));
@@ -384,7 +384,7 @@ test("lock keeps descriptors in sessionStorage; restore after login (and after a
   await app2.login();
   await app2.waitFor(() => /Restore unsaved changes/.test((app2.q("#modal") || {}).textContent || ""));
   app2.click('[data-rs="restore"]'); await app2.waitFor(() => app2.count() === 2);
-  app2.click("#sb-save"); await app2.waitFor(() => !app2.savebar()); await app2.settle();
+  app2.click("#sb-save"); await app2.waitFor(() => !app2.pending()); await app2.settle();
   eq(ourCommits(gh).length, 1, "restored list saved as one commit");
 });
 
@@ -463,7 +463,164 @@ test("case-only topic clash on number change is refused and stages nothing", asy
   try { await app.w.NotesWrite.run("changeChapterNumber", { subject: "S", folder: "Chapter 01 - A", newNum: 5 }); } catch (e) { err = e; }
   ok(err && /same file name/.test(err.message), "clash refused: " + (err && err.message));
   eq(app.count(), 0, "nothing staged");
-  ok(!app.savebar(), "no save bar");
+  ok(!app.pending(), "no save bar");
+});
+
+
+/* ================= Phase 8A: sidebar mode dock ================= */
+const oldBarGone = (app) => !app.q("#savebar") && !app.q(".savebar") && !app.d.body.classList.contains("has-savebar");
+const chipText = (app) => ((app.q(".dock-chip") || {}).textContent || "").trim();
+const rowsInert = (app) => app.q(".dock-pending").hasAttribute("inert");
+
+test("8A dock: idle shows only R/W (subject page, read and write mode), old bar is gone", async () => {
+  const gh = new FakeGH(BASE);
+  const app = await boot({ gh, hash: "#/subject/Math" });
+  ok(app.q("#index .dock"), "dock lives at the bottom of the index bar");
+  eq(app.qa(".dock .mode-btn").map((b) => b.dataset.mode), ["r", "w"], "R and W in the dock");
+  ok(!app.pending(), "read mode: no pending rows");
+  ok(rowsInert(app) && app.q(".dock-chip").hidden, "read mode: rows inert, chip hidden");
+  ok(oldBarGone(app), "read mode: #savebar, .savebar and body.has-savebar are gone");
+  ok(app.q("#index .dock").compareDocumentPosition(app.q(".chapters")) & app.w.Node.DOCUMENT_POSITION_PRECEDING, "dock comes after the chapter list");
+  await app.login();
+  ok(!app.pending() && rowsInert(app), "write mode idle: still only R/W");
+  ok(app.qa(".mode-btn").every((b) => !b.classList.contains("w-only")), "R/W are never hidden by the write-only rule");
+  ok(oldBarGone(app), "write mode idle: old bar still absent");
+  ok(app.q("#mb-pending").hidden, "mobile indicator hidden while nothing is pending");
+});
+
+test("8A dock: pending rows, count, Undo last, Discard (confirm), Save through the dock", async () => {
+  const gh = new FakeGH(BASE);
+  const app = await boot({ gh, hash: "#/subject/Math" });
+  await app.login();
+  await app.subjectMenu("Insert new chapter"); await app.submitDialog("Extra");
+  ok(app.pending(), "rows open after the first change");
+  eq(chipText(app), "1 unsaved change", "chip: singular");
+  ok(!rowsInert(app), "rows are interactive");
+  await app.menuAction("Chapter 01 - Basics", "Rename chapter"); await app.submitDialog("Core");
+  eq(chipText(app), "2 unsaved changes", "chip: plural");
+  ok(/Save/.test(app.sbText()) && /Undo last/.test(app.sbText()) && /Discard/.test(app.sbText()), "Save, Undo last and Discard are in the dock");
+  eq(app.q(".dock-chip").parentElement.getAttribute("aria-live"), "polite", "count region is aria-live polite");
+  ok(oldBarGone(app), "no old bar while pending");
+  ok(app.beforeUnloadPrevented(), "beforeunload registered while pending");
+  eq(app.q("#mb-pending").hidden, false, "mobile top-bar indicator shown while pending");
+  ok(/2 unsaved/.test(app.q("#mb-pending").textContent), "indicator shows the count");
+  app.click("#sb-undo"); await app.settle(30);
+  eq(chipText(app), "1 unsaved change", "Undo last lowers the count");
+  app.click("#sb-discard"); await app.settle(20);
+  ok(app.q("#modal"), "Discard asks for confirmation");
+  app.click("#modal [data-modal-close]"); await app.settle(10);
+  eq(app.count(), 1, "Cancel keeps the change");
+  app.click("#sb-discard"); await app.settle(20);
+  await app.submitDialog();
+  await app.waitFor(() => !app.pending());
+  ok(rowsInert(app) && app.q("#mb-pending").hidden, "Discard: dock back to R/W only, indicator hidden");
+  ok(!app.beforeUnloadPrevented(), "beforeunload removed");
+  await app.subjectMenu("Insert new chapter"); await app.submitDialog("Kept");
+  app.click("#sb-save");
+  await app.waitFor(() => !app.pending()); await app.settle();
+  eq(ourCommits(gh).length, 1, "Save through the dock makes exactly one commit");
+  ok(gh.files().has("notes/Math/Chapter 04 - Kept/.gitkeep"), "committed");
+  ok(rowsInert(app), "rows closed after Save");
+});
+
+test("8A dock: Saving state disables the buttons, a failed Save shows the error line", async () => {
+  const gh = new FakeGH(BASE);
+  const app = await boot({ gh, hash: "#/subject/Math" });
+  await app.login();
+  await app.subjectMenu("Insert new chapter"); await app.submitDialog("Slow");
+  let release;
+  gh.beforePatch = null;
+  const gate = new Promise((r) => { release = r; });
+  const realFetch = app.w.fetch;
+  app.w.fetch = async (u, o) => { if (o && o.method === "PATCH") await gate; return realFetch(u, o); };
+  app.click("#sb-save");
+  await app.waitFor(() => app.w.NotesStage.isSaving());
+  await app.settle(20);
+  const btns = ["#sb-save", "#sb-undo", "#sb-discard"].map((s) => app.q(s));
+  ok(btns.every((b) => b.disabled), "all three buttons disabled while saving");
+  eq(app.q("#sb-save").textContent, "Saving…", "Save button says Saving…");
+  eq(chipText(app), "Saving…", "chip says Saving…");
+  ok(app.q(".dock").classList.contains("saving"), "dock has the saving class");
+  release();
+  await app.waitFor(() => !app.pending()); await app.settle();
+  app.w.fetch = realFetch;
+
+  const gh2 = new FakeGH(BASE);
+  const app2 = await boot({ gh: gh2, hash: "#/subject/Math" });
+  await app2.login();
+  await app2.subjectMenu("Insert new chapter"); await app2.submitDialog("Extra");
+  gh2.failPatch = 3;
+  app2.click("#sb-save");
+  await app2.waitFor(() => /busy/.test(app2.q(".dock .dock-msg").textContent));
+  ok(app2.q(".dock .dock-msg").getAttribute("role") === "alert", "error line is an alert");
+  eq(app2.count(), 1, "change kept");
+  ok(!app2.q("#sb-save").disabled && app2.q("#sb-save").textContent === "Save", "Save usable again after the error");
+  app2.click("#sb-save"); await app2.waitFor(() => !app2.pending()); await app2.settle();
+  eq(app2.q(".dock .dock-msg").textContent, "", "error cleared after a good Save");
+});
+
+test("8A dock: home page shows the same dock and pending rows", async () => {
+  const gh = new FakeGH(BASE);
+  const app = await boot({ gh, hash: "#/" });
+  ok(app.q(".dock.home-dock"), "home dock present");
+  ok(!app.q(".mode-switch.home-mode"), "old home-mode class unused");
+  ok(!app.pending() && rowsInert(app), "home idle: R/W only");
+  await app.login();
+  app.click("#add-subject"); await app.waitFor(() => app.q("#modal input[name=value]"));
+  await app.submitDialog("History");
+  await app.settle(30);
+  await app.go("#/"); await app.settle(30);
+  ok(app.q(".dock.home-dock.has-pending"), "adding a subject opens the pending rows on the home page");
+  eq(chipText(app), "1 unsaved change", "home chip count");
+  ok(!rowsInert(app), "home rows interactive");
+  ok(oldBarGone(app), "no old bar on home");
+  app.click("#sb-undo"); await app.settle(40);
+  ok(!app.pending(), "home: Undo last closes the rows");
+  await app.w.NotesWrite.run("addSubject", { name: "Chem" }); await app.settle(20);
+  app.click("#sb-discard"); await app.settle(20);
+  await app.submitDialog(); await app.waitFor(() => !app.pending());
+  eq(app.count(), 0, "home: Discard through the dock");
+  await app.w.NotesWrite.run("addSubject", { name: "Bio" }); await app.settle(20);
+  app.click("#sb-save"); await app.waitFor(() => !app.pending()); await app.settle();
+  ok(gh.files().has("notes/Bio/.gitkeep"), "home: Save through the dock commits");
+});
+
+test("8A dock: lock hides the rows, restore after lock brings them back, local mode never shows them", async () => {
+  const gh = new FakeGH(BASE);
+  const app = await boot({ gh, hash: "#/subject/Math" });
+  await app.login();
+  await app.subjectMenu("Insert new chapter"); await app.submitDialog("Extra");
+  app.w.setMode("r"); await app.settle(30);
+  ok(!app.pending() && rowsInert(app) && app.q("#mb-pending").hidden, "read mode after lock: no pending rows, no indicator");
+  ok(!app.beforeUnloadPrevented(), "no beforeunload after lock");
+  await app.login();
+  await app.waitFor(() => /Restore unsaved changes/.test((app.q("#modal") || {}).textContent || ""));
+  app.click('[data-rs="restore"]');
+  await app.waitFor(() => app.count() === 1); await app.settle(30);
+  ok(app.pending(), "restored: the dock shows the change");
+  eq(chipText(app), "1 unsaved change", "restored count");
+
+  const folder = makeFolder(BASE); await folder.init();
+  const lapp = await boot({ mode: "local", folder, hash: "#/subject/Math" });
+  await lapp.login();
+  await lapp.subjectMenu("Insert new chapter"); await lapp.submitDialog("Extra");
+  ok(!lapp.pending() && rowsInert(lapp), "local: change applied at once, never pending rows");
+  ok(lapp.q(".dock") && lapp.qa(".dock .mode-btn").length === 2, "local: dock is only R/W");
+  ok(oldBarGone(lapp), "local: no old bar");
+});
+
+test("8A dock: no Save bar left in the stylesheets or the page", async () => {
+  const fsx = require("fs"), px = require("path");
+  for (const f of ["stage.css", "subject.css", "auth.css", "dock.css", "style.css", "notes.css"]) {
+    const css = fsx.readFileSync(px.join(__dirname, "..", f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    ok(!/savebar|has-savebar|sb-count|sb-actions|sb-msg/.test(css), `${f}: no old bar CSS`);
+  }
+  const js = fsx.readFileSync(px.join(__dirname, "..", "app.js"), "utf8");
+  ok(!/savebar|renderSaveBar|has-savebar/.test(js), "app.js: no old bar code");
+  const html = fsx.readFileSync(px.join(__dirname, "..", "index.html"), "utf8");
+  ok(/dock\.css/.test(html), "index.html loads dock.css");
+  const subject = fsx.readFileSync(px.join(__dirname, "..", "subject.css"), "utf8");
+  ok(/clamp\(320px, 26vw, 380px\)/.test(subject), "sidebar is the wider clamp()");
 });
 
 (async () => {

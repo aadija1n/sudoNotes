@@ -14,7 +14,7 @@ body.subject-view #app {
 
 .shell {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: clamp(320px, 26vw, 380px) 1fr; /* Phase 8A: wide enough for the mode dock on one row */
   height: 100%;
 }
 
@@ -148,33 +148,7 @@ body.subject-view #app {
   background: rgba(138, 180, 255, 0.1);
 }
 
-/* ---------- R / W buttons ---------- */
-.mode-switch {
-  display: flex;
-  gap: 10px;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border);
-}
-
-.mode-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.18s var(--ease);
-}
-.mode-btn:hover { border-color: var(--border-strong); color: var(--text); }
-.mode-btn[aria-pressed="true"] {
-  color: var(--bg);
-  background: var(--accent);
-  border-color: var(--accent);
-}
+/* R / W buttons and the Save / Undo / Discard rows live in the mode dock (dock.css) */
 
 /* ---------- Content panel ---------- */
 .content {
@@ -311,9 +285,10 @@ body.subject-view #app {
     width: min(86vw, 320px);
     z-index: 40;
     transform: translateX(-100%);
-    transition: transform 0.25s var(--ease);
+    visibility: hidden;
+    transition: transform 0.25s var(--ease), visibility 0s linear 0.25s;
   }
-  .index.open { transform: none; }
+  .index.open { transform: none; visibility: visible; transition: transform 0.25s var(--ease), visibility 0s; }
 
   .backdrop {
     position: fixed;

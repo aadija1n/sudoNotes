@@ -45,12 +45,29 @@ function flatTopics(s) {
   return s.chapters.flatMap((ch) => ch.topics.map((t) => ({ ...t, label: `${t.id} ${t.title}`, chapter: ch })));
 }
 
-/* ---------- mode (R / W) ---------- */
-/* The R and W buttons: bottom of the index bar on a subject page, bottom-left corner on the home page. */
+/* ---------- mode (R / W) and the mode dock (Phase 8A) ---------- */
+/* One component: the R / W switch, and (only while changes are pending in write mode) a count chip plus
+   Save / Undo last / Discard. Bottom of the index bar (and its mobile drawer) on a subject page, bottom-left
+   corner on the home page. renderDock() fills in the live parts; the markup itself never changes. */
 function modeSwitch(extra = "") {
-  return `<div class="mode-switch ${extra}">
-    <button class="mode-btn" data-mode="r" aria-pressed="${mode === "r"}" title="Reading mode">R</button>
-    <button class="mode-btn" data-mode="w" aria-pressed="${mode === "w"}" title="Writing mode">W</button>
+  return `<div class="dock ${extra}" data-dock>
+    <div class="dock-row">
+      <div class="mode-switch" role="group" aria-label="Mode">
+        <button class="mode-btn" data-mode="r" aria-pressed="${mode === "r"}" aria-label="Reading mode" title="Reading mode">R</button>
+        <button class="mode-btn" data-mode="w" aria-pressed="${mode === "w"}" aria-label="Writing mode" title="Writing mode">W</button>
+      </div>
+      <span class="dock-live" aria-live="polite" aria-atomic="true"><span class="dock-chip" hidden></span></span>
+    </div>
+    <div class="dock-pending" inert>
+      <div class="dock-pending-inner">
+        <div class="dock-actions">
+          <button type="button" class="dock-btn primary" id="sb-save">Save</button>
+          <button type="button" class="dock-btn" id="sb-undo">Undo last</button>
+          <button type="button" class="dock-btn" id="sb-discard">Discard</button>
+        </div>
+        <p class="dock-msg" role="alert"></p>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -63,7 +80,7 @@ function setMode(next) {
     if (NotesStage.count()) NotesStage.suspend(); // pending changes stay in sessionStorage (descriptors only) and can be restored after login
     Auth.lock(); // leaving write mode forgets the token
   }
-  renderSaveBar();
+  renderDock();
   armIdle();
 }
 
@@ -206,7 +223,7 @@ function renderNotConfigured() {
       <p>No notes source is configured for this site yet. Please check back later.</p>
       <div class="row"><button class="btn primary w-only" id="set-repo">Set notes repository</button></div>
     </div>
-    ${modeSwitch("home-mode")}`;
+    ${modeSwitch("home-dock")}`;
   setMode(mode);
 }
 
@@ -256,7 +273,7 @@ function renderHome() {
       : NotesData.sourceInfo().viewOnly
         ? `<p class="source-note">Read-only view from GitHub. ${NotesData.sourceInfo().fallback ? "This browser can't open folders, so editing is off here." : "Editing needs the published site or a folder-capable browser."}</p>`
         : `<p class="source-note">Notes from <b>${esc(repoLabel)}</b>. <button class="link-btn w-only" id="set-repo">Change notes repository</button></p>`}
-    ${modeSwitch("home-mode")}
+    ${modeSwitch("home-dock")}
   `;
   setMode(mode);
 }
@@ -306,6 +323,7 @@ function buildSubject(found) {
         <div class="mobile-bar">
           <button class="icon-btn" id="open-index" aria-label="Open index">☰</button>
           <span>${esc(name)}</span>
+          <button type="button" class="mb-pending" id="mb-pending" hidden></button>
         </div>
         ${dupHtml}
         <div class="note-scroll" id="note-scroll"></div>
@@ -1129,34 +1147,33 @@ function reloadView() {
   route();
 }
 
-function renderSaveBar() {
-  let bar = document.getElementById("savebar");
+/* Updates every dock on the page (and the mobile top-bar indicator) from the staging state. */
+function renderDock() {
   const n = NotesStage.count();
   const show = mode === "w" && n > 0;
-  document.body.classList.toggle("has-savebar", show);
-  if (!show) {
-    if (bar) bar.remove();
-    sbError = "";
-    return;
+  const saving = show && NotesStage.isSaving();
+  if (!show) sbError = "";
+  const text = saving ? "Saving…" : `${plural(n, "unsaved change")}`;
+  const title = NotesStage.labels().join("\n");
+  document.querySelectorAll(".dock").forEach((dk) => {
+    dk.classList.toggle("has-pending", show);
+    dk.classList.toggle("saving", saving);
+    dk.querySelector(".dock-pending").toggleAttribute("inert", !show); // hidden rows cannot be tabbed to
+    const chip = dk.querySelector(".dock-chip");
+    chip.hidden = !show;
+    chip.textContent = show ? text : "";
+    chip.title = show ? title : "";
+    dk.querySelector("#sb-save").textContent = saving ? "Saving…" : "Save";
+    ["#sb-save", "#sb-undo", "#sb-discard"].forEach((sel) => { dk.querySelector(sel).disabled = saving; });
+    dk.querySelector(".dock-msg").textContent = show ? sbError : "";
+  });
+  const badge = document.getElementById("mb-pending");
+  if (badge) {
+    badge.hidden = !show;
+    badge.classList.toggle("saving", saving);
+    badge.textContent = show ? (saving ? "Saving…" : `${n} unsaved`) : "";
+    badge.setAttribute("aria-label", show ? `${plural(n, "unsaved change")}. Open the index to save.` : "");
   }
-  if (!bar) {
-    bar = document.createElement("div");
-    bar.id = "savebar";
-    bar.className = "savebar";
-    bar.setAttribute("role", "region");
-    bar.setAttribute("aria-label", "Unsaved changes");
-    document.body.appendChild(bar);
-  }
-  const saving = NotesStage.isSaving();
-  bar.classList.toggle("saving", saving);
-  bar.innerHTML = `
-    <span class="sb-count" title="${esc(NotesStage.labels().join("\n"))}">${saving ? "Saving…" : `${plural(n, "unsaved change")}`}</span>
-    <div class="sb-actions">
-      <button class="btn primary" id="sb-save"${saving ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button>
-      <button class="btn" id="sb-undo"${saving ? " disabled" : ""}>Undo last</button>
-      <button class="btn" id="sb-discard"${saving ? " disabled" : ""}>Discard</button>
-    </div>
-    <p class="sb-msg" role="alert">${esc(sbError)}</p>`;
 }
 
 /* The browser's own "Leave site?" prompt, registered only while changes are pending. */
@@ -1192,7 +1209,7 @@ async function doSave() {
   } catch (e) {
     if (e.code === "replay-failed") showReplayFailure(e.failures || []);
     else sbError = e.message || "Could not save. Your changes are still here.";
-    renderSaveBar();
+    renderDock();
     return false;
   }
 }
@@ -1418,7 +1435,7 @@ document.addEventListener("click", (e) => {
   const chapterBtn = t.closest(".chapter-btn");
   if (chapterBtn) { toggleChapter(chapterBtn.closest(".chapter")); return; }
 
-  if (t.closest("#open-index")) { setDrawer(true); return; }
+  if (t.closest("#open-index, #mb-pending")) { setDrawer(true); return; }
   if (t.closest("#backdrop")) { setDrawer(false); return; }
   if (t.closest("#add-subject")) { addSubjectDialog(); return; }
   if (t.closest("#add-content")) { toast("The insert menu arrives in Phase 9"); return; }
@@ -1430,7 +1447,7 @@ document.addEventListener("keydown", (e) => {
 
 NotesData.setTokenProvider(() => Auth.getToken());
 NotesWrite.setGuard(() => mode === "w"); // saving is only possible while writing mode is unlocked
-NotesStage.onChange(() => { renderSaveBar(); syncBeforeUnload(); });
+NotesStage.onChange(() => { renderDock(); syncBeforeUnload(); });
 if (NotesData.source() === "local") Auth.setRecordLoader(() => NotesLocal.readRootFile("auth.json"));
 window.addEventListener("hashchange", route);
 window.addEventListener("resize", closeMenu);

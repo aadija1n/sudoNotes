@@ -1,0 +1,163 @@
+/* Phase 8A: the mode dock.
+   One component for R / W and the pending-changes controls (Save, Undo last, Discard).
+   It sits at the bottom of the sidebar (and its mobile drawer) and bottom-left on the home page.
+   Idle: just the R / W switch. With unsaved changes (write mode, GitHub): a count chip on the same
+   row and a second row of buttons slide in. Nothing here is fixed to the bottom centre any more. */
+
+.dock {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+/* inside the index bar: a quiet surface layer under the chapter list */
+.index > .dock {
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.025);
+  border-top: 1px solid var(--border);
+}
+
+/* home page: bare R / W when idle, a card once changes are pending */
+.dock.home-dock {
+  position: fixed;
+  left: 14px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease), padding 0.2s var(--ease);
+}
+.dock.home-dock.has-pending {
+  width: min(340px, calc(100vw - 28px));
+  padding: 10px 12px;
+  background: #17171d;
+  border-color: var(--border-strong);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+/* keep the last lines of the home page reachable above the dock */
+body:not(.subject-view) #app { padding-bottom: 200px; }
+
+/* ---------- top row: R / W switch + count chip ---------- */
+.dock-row { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+
+.mode-switch {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.mode-btn {
+  min-width: 42px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease);
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn[aria-pressed="true"] { background: var(--accent); color: #0b0d14; }
+
+.dock-live { display: block; flex: 1; min-width: 0; text-align: right; }
+.dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.1);
+  color: #ffd166;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-chip[hidden] { display: none; }
+.dock-chip::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dock.saving .dock-chip { background: rgba(138, 180, 255, 0.12); color: var(--accent); }
+.dock.saving .dock-chip::before { animation: dock-pulse 1s ease-in-out infinite; }
+@keyframes dock-pulse { 50% { opacity: 0.3; } }
+
+/* ---------- second row: only while changes are pending ---------- */
+.dock-pending {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.22s var(--ease), opacity 0.18s var(--ease);
+}
+.dock.has-pending .dock-pending { grid-template-rows: 1fr; opacity: 1; }
+.dock-pending-inner { min-height: 0; overflow: hidden; }
+.dock-actions { display: flex; gap: 8px; padding: 10px 0 2px; }
+.dock-actions .dock-btn { margin: 0; }
+
+.dock-btn {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.dock-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
+.dock-btn.primary { flex: 1 1 auto; background: var(--accent); border-color: var(--accent); color: #0b0d14; font-weight: 600; font-size: 14px; }
+.dock-btn.primary:hover { background: #a3c4ff; border-color: #a3c4ff; color: #0b0d14; }
+#sb-discard:hover { color: #ff8a8a; }
+.dock-btn:disabled { opacity: 0.55; cursor: default; }
+.dock-btn:disabled:hover { background: transparent; border-color: var(--border); color: var(--text-muted); }
+.dock-btn.primary:disabled:hover { background: var(--accent); border-color: var(--accent); color: #0b0d14; }
+
+.dock-msg { margin: 8px 0 2px; color: #ff8a8a; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.dock-msg:empty { display: none; }
+
+/* ---------- touch: comfortable targets ---------- */
+@media (pointer: coarse) {
+  .mode-btn { height: 38px; min-width: 48px; }
+  .dock-btn { min-height: 44px; }
+}
+
+/* ---------- mobile top bar: pending indicator while the drawer is closed ---------- */
+.mb-pending {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.1);
+  color: #ffd166;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mb-pending[hidden] { display: none; }
+.mb-pending::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.mb-pending.saving { color: var(--accent); border-color: rgba(138, 180, 255, 0.4); background: rgba(138, 180, 255, 0.12); }

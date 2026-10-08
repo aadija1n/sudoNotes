@@ -294,8 +294,10 @@ function makeApi(dom, w) {
       w.dispatchEvent(ev);
       return ev.defaultPrevented;
     },
-    savebar: () => d.getElementById("savebar"),
-    sbText: () => (d.getElementById("savebar") ? d.getElementById("savebar").textContent.replace(/\s+/g, " ").trim() : null),
+    // Phase 8A: the Save bar is gone; the mode dock shows pending rows through the .has-pending class
+    dock: () => d.querySelector(".dock"),
+    pending: () => d.querySelector(".dock.has-pending"),
+    sbText: () => { const dk = d.querySelector(".dock.has-pending"); return dk ? dk.textContent.replace(/\s+/g, " ").trim() : null; },
     async go(hash) { w.location.hash = hash; await api.settle(30); },
   };
   return api;
