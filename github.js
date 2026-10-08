@@ -95,7 +95,12 @@
     if (D.source() === "local") return global.NotesLocal.commit(message, plan);
     const repo = getWriteRepo();
     const head = await getHead(repo);
-    const changes = plan(head.entries);
+    return writeCommit(repo, head, plan(head.entries), message);
+  }
+
+  /* Writes a ready change list on top of `head` as ONE commit: one tree, one commit, one ref update.
+     A branch that moved meanwhile (422/409 on the ref update) becomes the coded error "conflict". Never forces. */
+  async function writeCommit(repo, head, changes, message) {
     const tree = await ghRepo(repo, NOTES, "POST", "/git/trees", { base_tree: head.treeSha, tree: changes }, "prepare the change");
     const made = await ghRepo(repo, NOTES, "POST", "/git/commits", { message, tree: tree.sha, parents: [head.commitSha] }, "create the commit");
     try {
@@ -253,50 +258,23 @@
   const blobsUnder = (entries, folder) => entries.filter((e) => e.type === "blob" && e.path.startsWith(`${folder}/`));
   const removal = (e) => ({ path: e.path, mode: e.mode, type: "blob", sha: null });
 
-  /* ---------- subject operations ---------- */
-  function addSubject(rawName) {
-    const name = cleanName(rawName);
-    return commit(`Add subject: ${name}`, (entries) => {
-      const err = validateName(name, subjectsIn(entries).map((s) => s.toLowerCase()));
-      if (err) throw fail("invalid", err);
-      // git cannot store empty folders, so a .gitkeep file holds the subject open
-      return [{ path: `${D.root}/${name}/.gitkeep`, mode: "100644", type: "blob", content: "" }];
-    });
-  }
-
-  function renameSubject(oldName, rawNew) {
-    const name = cleanName(rawNew);
-    return commit(`Rename subject: ${oldName} → ${name}`, (entries) => {
-      const files = blobsUnder(entries, `${D.root}/${oldName}`);
-      if (!files.length) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
-      const others = subjectsIn(entries).filter((s) => s !== oldName).map((s) => s.toLowerCase());
-      const err = validateName(name, others);
-      if (err) throw fail("invalid", err);
-      const from = `${D.root}/${oldName}/`;
-      const to = `${D.root}/${name}/`;
-      return files.flatMap((e) => [removal(e), { path: to + e.path.slice(from.length), mode: e.mode, type: "blob", sha: e.sha }]);
-    });
-  }
-
-  function deleteSubject(name) {
-    return commit(`Delete subject: ${name}`, (entries) => {
-      const files = blobsUnder(entries, `${D.root}/${name}`);
-      if (!files.length) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
-      return files.map(removal);
-    });
-  }
-
-
-  /* ---------- chapter operations (Phase 6) ---------- */
+  /* ---------- plan builders ----------
+     Every operation is a plan builder: plan(entries, args, out) gets the CURRENT file list and returns the tree
+     changes; `out` collects results the UI needs (new chapter number, renumber map, ...).
+     The same builders run in three places: immediately (local mode), against the virtual tree (staging, GitHub mode)
+     and again when a pending list is replayed on a newer repository state. Each re-validates against the entries it is given. */
   const CHAPTER_RE = /^Chapter\s+(\d+)\s*-\s*(.+)$/i; // same pattern data.js parses folders with
   const TOPIC_FILE_RE = /^(\d+)\.(\d+)(\s+.+\.md)$/i; // "N.M Title.md" (M and the title text are kept as written)
   const MAX_CHAPTER_NUMBER = 999999;
   const padNum = (n) => String(n).padStart(2, "0"); // 00 ... 99, then 100 (three digits)
   const chapterFolder = (num, name) => `Chapter ${padNum(num)} - ${name}`;
   const gitkeep = (path) => ({ path, mode: "100644", type: "blob", content: "" });
-  const moved = (e, path) => ({ path, mode: e.mode, type: "blob", sha: e.sha });
+  /* A moved file keeps its blob (sha), or its staged text (content) when it is not in the repository yet. */
+  const moved = (e, path) => (e.content !== undefined
+    ? { path, mode: e.mode, type: "blob", content: e.content }
+    : { path, mode: e.mode, type: "blob", sha: e.sha });
 
-  /* Reads the chapters of one subject from the fresh file list. `exists` = the subject has any file. */
+  /* Reads the chapters of one subject from the file list. `exists` = the subject has any file. */
   function chaptersIn(entries, subject) {
     const prefix = `${D.root}/${subject}/`;
     const byFolder = new Map();
@@ -320,6 +298,23 @@
     return { chapter, chapters: info.chapters };
   }
 
+  /* Groups of chapter folders that share one number, e.g. [["Chapter 1 - A", "Chapter 01 - B"]]. */
+  function duplicateGroups(chapters) {
+    const byNum = new Map();
+    for (const c of chapters) byNum.set(c.num, [...(byNum.get(c.num) || []), c.folder]);
+    return [...byNum.values()].filter((g) => g.length > 1);
+  }
+
+  function duplicateMessage(groups) {
+    const names = groups.map((g) => g.map((f) => `"${f}"`).join(" and ")).join("; ");
+    return `Two chapter folders share the same number (${names}). Rename one of those folders so each chapter has its own number (in your notes repository or your notes folder), then try again. Moving, deleting and renumbering chapters is turned off for this subject until then.`;
+  }
+
+  function assertNoDuplicates(chapters) {
+    const groups = duplicateGroups(chapters);
+    if (groups.length) throw fail("duplicate", duplicateMessage(groups));
+  }
+
   /* A subject with no files would vanish (git and the offline folder both drop empty folders),
      so when a change would empty it, the same commit also writes notes/<Subject>/.gitkeep. */
   function keepSubjectAlive(entries, subject, changes) {
@@ -330,90 +325,209 @@
     return stays || arrives ? changes : [...changes, gitkeep(`${prefix}.gitkeep`)];
   }
 
-  /* Number 00 if the subject has no chapters, else highest + 1. Resolves with the new chapter's number and folder. */
-  async function addChapter(subject, rawName) {
-    const name = cleanName(rawName);
-    let made = null;
-    const result = await commit(`Add chapter: ${name} (${subject})`, (entries) => {
-      const err = validateName(name, null, "chapter");
-      if (err) throw fail("invalid", err);
-      const { exists, chapters } = chaptersIn(entries, subject);
-      if (!exists) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
-      const num = chapters.length ? Math.max(...chapters.map((c) => c.num)) + 1 : 0;
-      made = { num, folder: chapterFolder(num, name) };
-      // git cannot store empty folders, so a .gitkeep file holds the chapter open
-      return [gitkeep(`${D.root}/${subject}/${made.folder}/.gitkeep`)];
-    });
-    return { ...result, num: made.num, folder: made.folder };
+  /* Gives one chapter a new number: its folder becomes "Chapter <NN> - Name" and every "N.M Title.md" directly
+     inside becomes "<new>.M Title.md". Other files (.gitkeep, images, subfolders) move unchanged.
+     Returns the removals and the additions separately so callers can put all removals first. */
+  function renumberChapter(entries, subject, chapter, newNum) {
+    const from = `${D.root}/${subject}/${chapter.folder}/`;
+    const newFolder = chapterFolder(newNum, chapter.name);
+    const to = `${D.root}/${subject}/${newFolder}/`;
+    const targets = new Set();
+    const removals = [];
+    const adds = [];
+    for (const e of blobsUnder(entries, from.slice(0, -1))) {
+      let rel = e.path.slice(from.length);
+      const t = rel.includes("/") ? null : rel.match(TOPIC_FILE_RE);
+      if (t) rel = `${newNum}.${t[2]}${t[3]}`;
+      if (targets.has(rel.toLowerCase())) throw fail("invalid", `Two topics would end up with the same file name (${rel}). Nothing was changed.`);
+      targets.add(rel.toLowerCase());
+      removals.push(removal(e));
+      adds.push(moved(e, to + rel));
+    }
+    return { removals, adds, folder: newFolder };
   }
 
-  /* Changes only the name part. The number and the topic files stay as they are. */
-  async function renameChapter(subject, folder, rawName) {
-    const name = cleanName(rawName);
-    let made = null;
-    const result = await commit(`Rename chapter: ${folder} → ${name}`, (entries) => {
-      const err = validateName(name, null, "chapter");
-      if (err) throw fail("invalid", err);
-      const { chapter, chapters } = findChapter(entries, subject, folder);
-      const newFolder = chapterFolder(chapter.num, name);
-      if (newFolder === folder) throw fail("invalid", "That is already the name of this chapter.");
-      if (chapters.some((c) => c.folder !== folder && c.folder.toLowerCase() === newFolder.toLowerCase())) {
-        throw fail("invalid", "Another chapter folder already has that name and number.");
-      }
-      const from = `${D.root}/${subject}/${folder}/`;
-      const to = `${D.root}/${subject}/${newFolder}/`;
-      made = { num: chapter.num, folder: newFolder };
-      const changes = blobsUnder(entries, from.slice(0, -1)).flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
-      return keepSubjectAlive(entries, subject, changes);
-    });
-    return { ...result, num: made.num, folder: made.folder };
+  const OPS = {
+    addSubject: {
+      label: (a) => `Add subject: ${cleanName(a.name)}`,
+      plan(entries, a) {
+        const name = cleanName(a.name);
+        const err = validateName(name, subjectsIn(entries).map((s) => s.toLowerCase()));
+        if (err) throw fail("invalid", err);
+        // git cannot store empty folders, so a .gitkeep file holds the subject open
+        return [gitkeep(`${D.root}/${name}/.gitkeep`)];
+      },
+    },
+
+    renameSubject: {
+      label: (a) => `Rename subject: ${a.oldName} → ${cleanName(a.name)}`,
+      plan(entries, a) {
+        const name = cleanName(a.name);
+        const files = blobsUnder(entries, `${D.root}/${a.oldName}`);
+        if (!files.length) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
+        const others = subjectsIn(entries).filter((s) => s !== a.oldName).map((s) => s.toLowerCase());
+        const err = validateName(name, others);
+        if (err) throw fail("invalid", err);
+        const from = `${D.root}/${a.oldName}/`;
+        const to = `${D.root}/${name}/`;
+        return files.flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
+      },
+    },
+
+    deleteSubject: {
+      label: (a) => `Delete subject: ${a.name}`,
+      plan(entries, a) {
+        const files = blobsUnder(entries, `${D.root}/${a.name}`);
+        if (!files.length) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
+        return files.map(removal);
+      },
+    },
+
+    /* Number 00 if the subject has no chapters, else highest + 1. */
+    addChapter: {
+      label: (a) => `Add chapter: ${cleanName(a.name)} (${a.subject})`,
+      plan(entries, a, out) {
+        const name = cleanName(a.name);
+        const err = validateName(name, null, "chapter");
+        if (err) throw fail("invalid", err);
+        const { exists, chapters } = chaptersIn(entries, a.subject);
+        if (!exists) throw fail("missing", "That subject no longer exists in the repo. Reload the page.");
+        const num = chapters.length ? Math.max(...chapters.map((c) => c.num)) + 1 : 0;
+        out.num = num;
+        out.folder = chapterFolder(num, name);
+        // git cannot store empty folders, so a .gitkeep file holds the chapter open
+        return [gitkeep(`${D.root}/${a.subject}/${out.folder}/.gitkeep`)];
+      },
+    },
+
+    /* Changes only the name part. The number and the topic files stay as they are. */
+    renameChapter: {
+      label: (a) => `Rename chapter: ${a.folder} → ${cleanName(a.name)}`,
+      plan(entries, a, out) {
+        const name = cleanName(a.name);
+        const err = validateName(name, null, "chapter");
+        if (err) throw fail("invalid", err);
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        const newFolder = chapterFolder(chapter.num, name);
+        if (newFolder === a.folder) throw fail("invalid", "That is already the name of this chapter.");
+        if (chapters.some((c) => c.folder !== a.folder && c.folder.toLowerCase() === newFolder.toLowerCase())) {
+          throw fail("invalid", "Another chapter folder already has that name and number.");
+        }
+        const from = `${D.root}/${a.subject}/${a.folder}/`;
+        const to = `${D.root}/${a.subject}/${newFolder}/`;
+        out.num = chapter.num;
+        out.folder = newFolder;
+        const changes = blobsUnder(entries, from.slice(0, -1)).flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
+        return keepSubjectAlive(entries, a.subject, changes);
+      },
+    },
+
+    /* Manual number. One commit-worth of changes: folder renamed, topic files renamed. */
+    changeChapterNumber: {
+      label: (a) => `Change chapter number: ${a.folder} → ${Number.isInteger(a.newNum) ? padNum(a.newNum) : String(a.newNum)}`,
+      plan(entries, a, out) {
+        const newNum = a.newNum;
+        if (!Number.isInteger(newNum) || newNum < 0 || newNum > MAX_CHAPTER_NUMBER) {
+          throw fail("invalid", `Enter a whole number from 0 to ${MAX_CHAPTER_NUMBER}.`);
+        }
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        assertNoDuplicates(chapters);
+        if (newNum === chapter.num) throw fail("invalid", "That chapter already has this number.");
+        if (chapters.some((c) => c.folder !== a.folder && c.num === newNum)) {
+          throw fail("invalid", `Chapter ${padNum(newNum)} already exists. Pick a number that is not used yet.`);
+        }
+        const r = renumberChapter(entries, a.subject, chapter, newNum);
+        out.oldNum = chapter.num;
+        out.num = newNum;
+        out.folder = r.folder;
+        out.map = { [chapter.num]: newNum };
+        return keepSubjectAlive(entries, a.subject, [...r.removals, ...r.adds]);
+      },
+    },
+
+    /* Deleting a chapter also shifts every chapter with a HIGHER number down by one (folders and topic files),
+       so numbers stay continuous. Lower numbers, and gaps below the deleted chapter, are left alone. */
+    deleteChapter: {
+      label: (a) => `Delete chapter: ${a.folder} (${a.subject})`,
+      plan(entries, a, out) {
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        assertNoDuplicates(chapters);
+        const removals = blobsUnder(entries, `${D.root}/${a.subject}/${a.folder}`).map(removal);
+        const higher = chapters.filter((c) => c.num > chapter.num).sort((x, y) => x.num - y.num);
+        const gone = [];
+        const adds = [];
+        const map = {};
+        for (const c of higher) {
+          const r = renumberChapter(entries, a.subject, c, c.num - 1);
+          gone.push(...r.removals);
+          adds.push(...r.adds);
+          map[c.num] = c.num - 1;
+        }
+        out.removed = chapter.num;
+        out.map = map;
+        return keepSubjectAlive(entries, a.subject, [...removals, ...gone, ...adds]);
+      },
+    },
+
+    /* Swaps the numbers of two neighbouring chapters (names stay). "Up" = the previous chapter in the list sorted by
+       number (not always number - 1 when gaps exist). All blobs of both old folders are removed first, then added at
+       the new paths, so two chapters with the same name (swapped paths equal each other's old paths) still work. */
+    moveChapter: {
+      label: (a) => `Move chapter ${a.dir === "up" ? "up" : "down"}: ${a.folder} (${a.subject})`,
+      plan(entries, a, out) {
+        if (a.dir !== "up" && a.dir !== "down") throw fail("invalid", "Unknown direction.");
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        assertNoDuplicates(chapters);
+        const sorted = [...chapters].sort((x, y) => x.num - y.num);
+        const i = sorted.findIndex((c) => c.folder === chapter.folder);
+        const other = sorted[a.dir === "up" ? i - 1 : i + 1];
+        if (!other) throw fail("invalid", a.dir === "up" ? "This is already the first chapter." : "This is already the last chapter.");
+        const mine = renumberChapter(entries, a.subject, chapter, other.num);
+        const theirs = renumberChapter(entries, a.subject, other, chapter.num);
+        out.map = { [chapter.num]: other.num, [other.num]: chapter.num };
+        out.num = other.num;
+        out.folder = mine.folder;
+        return [...mine.removals, ...theirs.removals, ...mine.adds, ...theirs.adds];
+      },
+    },
+  };
+
+  /* ---------- running an operation ----------
+     run() is the ONE entry point for the UI.
+       local mode  -> applied to the folder immediately (one change, no staging)
+       GitHub mode -> staged by NotesStage; one Save commits everything. */
+  async function immediate(type, args) {
+    const op = OPS[type];
+    const out = {};
+    const res = await commit(op.label(args), (entries) => op.plan(entries, args, out));
+    return { ...res, ...out };
   }
 
-  /* Manual number. The folder becomes "Chapter <new NN> - Name" and every "N.M Title.md" directly inside
-     becomes "<new>.M Title.md". Other files (.gitkeep, images, subfolders) move unchanged. One commit. */
-  async function changeChapterNumber(subject, folder, newNum) {
-    let made = null;
-    const label = Number.isInteger(newNum) ? padNum(newNum) : String(newNum);
-    const result = await commit(`Change chapter number: ${folder} → ${label}`, (entries) => {
-      if (!Number.isInteger(newNum) || newNum < 0 || newNum > MAX_CHAPTER_NUMBER) {
-        throw fail("invalid", `Enter a whole number from 0 to ${MAX_CHAPTER_NUMBER}.`);
-      }
-      const { chapter, chapters } = findChapter(entries, subject, folder);
-      if (newNum === chapter.num) throw fail("invalid", "That chapter already has this number.");
-      if (chapters.some((c) => c.folder !== folder && c.num === newNum)) {
-        throw fail("invalid", `Chapter ${padNum(newNum)} already exists. Pick a number that is not used yet.`);
-      }
-      const newFolder = chapterFolder(newNum, chapter.name);
-      const from = `${D.root}/${subject}/${folder}/`;
-      const to = `${D.root}/${subject}/${newFolder}/`;
-      made = { oldNum: chapter.num, num: newNum, folder: newFolder };
-      const targets = new Set();
-      const changes = [];
-      for (const e of blobsUnder(entries, from.slice(0, -1))) {
-        let rel = e.path.slice(from.length);
-        const t = rel.includes("/") ? null : rel.match(TOPIC_FILE_RE);
-        if (t) rel = `${newNum}.${t[2]}${t[3]}`;
-        if (targets.has(rel.toLowerCase())) throw fail("invalid", `Two topics would end up with the same file name (${rel}). Nothing was changed.`);
-        targets.add(rel.toLowerCase());
-        changes.push(removal(e), moved(e, to + rel));
-      }
-      return keepSubjectAlive(entries, subject, changes);
-    });
-    return { ...result, oldNum: made.oldNum, num: made.num, folder: made.folder };
+  async function run(type, args) {
+    if (!OPS[type]) throw fail("invalid", "Unknown change.");
+    if (guard && !guard()) throw fail("locked", "Writing mode is locked. Click W and log in again.");
+    if (D.source() === "local") return immediate(type, args);
+    if (!global.NotesStage) throw fail("no-stage", "The change list is not available. Reload the page.");
+    return global.NotesStage.stage(type, args, OPS[type].label(args));
   }
 
-  function deleteChapter(subject, folder) {
-    return commit(`Delete chapter: ${folder} (${subject})`, (entries) => {
-      findChapter(entries, subject, folder);
-      const changes = blobsUnder(entries, `${D.root}/${subject}/${folder}`).map(removal);
-      return keepSubjectAlive(entries, subject, changes);
-    });
-  }
+  /* The older one-call functions keep working exactly as before (they commit immediately). */
+  const addSubject = (rawName) => immediate("addSubject", { name: rawName });
+  const renameSubject = (oldName, rawNew) => immediate("renameSubject", { oldName, name: rawNew });
+  const deleteSubject = (name) => immediate("deleteSubject", { name });
+  const addChapter = (subject, rawName) => immediate("addChapter", { subject, name: rawName });
+  const renameChapter = (subject, folder, rawName) => immediate("renameChapter", { subject, folder, name: rawName });
+  const changeChapterNumber = (subject, folder, newNum) => immediate("changeChapterNumber", { subject, folder, newNum });
+  const deleteChapter = (subject, folder) => immediate("deleteChapter", { subject, folder });
+  const moveChapter = (subject, folder, dir) => immediate("moveChapter", { subject, folder, dir });
 
   global.NotesWrite = {
     cleanName, validateName, addSubject, renameSubject, deleteSubject,
-    addChapter, renameChapter, changeChapterNumber, deleteChapter,
+    addChapter, renameChapter, changeChapterNumber, deleteChapter, moveChapter,
+    run, duplicateGroups, duplicateMessage,
     getWriteRepo, verifyNotesRepo, saveConfig, parseRepoInput,
     setGuard(fn) { guard = fn; },
+    /* used by stage.js only */
+    _internal: { OPS, getHead, writeCommit, getWriteRepo, fail, guardOk: () => !guard || guard() },
   };
 })(window);

@@ -188,7 +188,8 @@ ${mode}};
       if (!cm) continue;
       const num = parseInt(cm[1], 10);
       let ch = subj.chapters.get(num);
-      if (!ch) subj.chapters.set(num, (ch = { num, name: cm[2].trim(), folder: chapDir, topics: [] }));
+      if (!ch) subj.chapters.set(num, (ch = { num, name: cm[2].trim(), folder: chapDir, topics: [], dups: [] }));
+      else if (ch.folder !== chapDir && !ch.dups.includes(chapDir)) ch.dups.push(chapDir); // two folders, one number (Phase 7 warning)
 
       const tm = file.match(TOPIC_RE);
       if (!tm) continue;
@@ -208,9 +209,33 @@ ${mode}};
     };
   }
 
+  /* ---------- staged changes (Phase 7) ----------
+     stage.js registers an overlay while changes are pending (GitHub mode, writing mode). Then every view reads
+     the virtual tree (base + pending changes) instead of the repository, and note text of moved or new files
+     comes from the stage (staged text, or the original blob). The signatures below do not change. */
+  let overlay = null; // { active(), paths(), resolve(path) -> {content}|{sha}|null }
+  const overlayOn = () => !!(overlay && overlay.active());
+  function setOverlay(o) { overlay = o; }
+
+  async function loadBlob(repo, sha) {
+    const token = tokenProvider ? tokenProvider() : null;
+    let res;
+    try {
+      res = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/git/blobs/${encodeURIComponent(sha)}`, {
+        cache: "no-store",
+        headers: { Accept: "application/vnd.github.raw+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+    } catch {
+      throw fail("network", "Could not load this note. Check your internet connection.");
+    }
+    if (!res.ok) throw fail("http", `The note could not be loaded (${res.status}).`);
+    return res.text();
+  }
+
   /* ---------- public API ---------- */
   let dataPromise = null;
   function loadData() {
+    if (overlayOn()) return Promise.resolve(parseTree(overlay.paths(), active.root)); // never cached: it changes with every edit
     if (!dataPromise) {
       dataPromise = (async () => {
         if (source() === "local") return parseTree(await global.NotesLocal.listPaths(), active.root);
@@ -248,6 +273,11 @@ ${mode}};
     if (source() === "local") return global.NotesLocal.readText(path);
     const repo = notesRepo();
     if (!repo) throw fail("not-configured", "No notes repository has been configured for this site yet.");
+    if (overlayOn()) {
+      const r = overlay.resolve(path); // a staged file: its text, or the blob it came from (even if it was moved or renamed)
+      if (r && r.content !== undefined) return r.content;
+      if (r && r.sha) return loadBlob(repo, r.sha);
+    }
     const url = path.split("/").map(encodeURIComponent).join("/");
 
     // In writing mode read through the API: it is always current, while the raw file host
@@ -286,7 +316,7 @@ ${mode}};
 
   global.NotesData = {
     loadData, resetData, loadNote, parseTree, refresh, source, sourceInfo,
-    notesRepo, appRepo, isConfigured, setNotesRepo, configText, assetUrl,
+    notesRepo, appRepo, isConfigured, setNotesRepo, configText, assetUrl, setOverlay,
     get root() { return active.root; },
     setTokenProvider(fn) { tokenProvider = fn; },
   };

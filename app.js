@@ -4,7 +4,7 @@
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
   subject: [["Insert new chapter", 0, "", "chapter:add"], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
-  chapter: [["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Delete chapter", 0, "danger", "chapter:delete"]],
+  chapter: [["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Move up", 0, "", "chapter:up"], ["Move down", 0, "", "chapter:down"], ["Delete chapter", 0, "danger", "chapter:delete"]],
   topic: [["Rename", 8], ["Move up", 8], ["Move down", 8], ["Delete", 8, "danger"]],
 };
 
@@ -58,7 +58,12 @@ function setMode(next) {
   mode = next;
   document.body.classList.toggle("write", mode === "w");
   document.querySelectorAll(".mode-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
-  if (mode === "r") { closeMenu(); Auth.lock(); } // leaving write mode forgets the token
+  if (mode === "r") {
+    closeMenu();
+    if (NotesStage.count()) NotesStage.suspend(); // pending changes stay in sessionStorage (descriptors only) and can be restored after login
+    Auth.lock(); // leaving write mode forgets the token
+  }
+  renderSaveBar();
   armIdle();
 }
 
@@ -79,7 +84,12 @@ function openMenu(btn, type) {
   const chapterEl = btn.closest(".chapter");
   menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : ""; // which chapter a chapter menu acts on
   menuEl.setAttribute("role", "menu");
-  menuEl.innerHTML = MENUS[type]
+  let items = MENUS[type];
+  if (type === "chapter" && subj) { // the first chapter has no "Move up", the last has no "Move down" (hidden)
+    const i = subj.chapters.findIndex((c) => c.folder === menuEl.dataset.folder);
+    items = items.filter((it) => !(it[3] === "chapter:up" && i === 0) && !(it[3] === "chapter:down" && i === subj.chapters.length - 1));
+  }
+  menuEl.innerHTML = items
     .map(([label, phase, cls, action]) => `<button role="menuitem" class="${cls || ""}" data-phase="${phase}" data-action="${action || ""}" data-label="${esc(label)}">${esc(label)}</button>`)
     .join("");
   document.body.appendChild(menuEl);
@@ -275,6 +285,11 @@ function buildSubject(found) {
       </ul></div></div>
     </div>`).join("");
 
+  const dupGroups = found.chapters.filter((c) => c.dups && c.dups.length).map((c) => [c.folder, ...c.dups]);
+  const dupHtml = dupGroups.length
+    ? `<div class="dup-warning w-only" role="alert"><p><b>Two chapter folders share a number.</b></p>${dupGroups.map((g) => `<p>${g.map((f) => `<b>${esc(f)}</b>`).join(" and ")} use the same chapter number, so they are merged in this list.</p>`).join("")}<p>Rename one of the folders in your notes repository or notes folder. Until then, Move, Delete and Change number are turned off for this subject.</p></div>`
+    : "";
+
   app.innerHTML = `
     <div class="shell">
       <aside class="index" id="index">
@@ -292,6 +307,7 @@ function buildSubject(found) {
           <button class="icon-btn" id="open-index" aria-label="Open index">☰</button>
           <span>${esc(name)}</span>
         </div>
+        ${dupHtml}
         <div class="note-scroll" id="note-scroll"></div>
         <div class="add-bar w-only"><button id="add-content" aria-label="Add content" title="Add content">+</button></div>
       </section>
@@ -454,8 +470,15 @@ function armIdle() {
   clearTimeout(idleTimer);
   if (mode !== "w") return;
   idleTimer = setTimeout(() => {
+    const had = NotesStage.count();
+    if (had && !NotesStage.canSuspend()) { // cannot keep the changes anywhere: stay unlocked rather than lose them
+      armIdle();
+      toast("Still unlocked because you have unsaved changes. Save or discard them to lock.", 6000);
+      return;
+    }
     setMode("r");
-    toast("Locked after 30 minutes of inactivity", 4000);
+    if (had) reloadView(); // the screen goes back to the saved notes
+    toast(had ? "Locked after 30 minutes. Your unsaved changes were kept: log in again to restore them." : "Locked after 30 minutes of inactivity", 5000);
   }, IDLE_MS);
 }
 ["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, armIdle, { passive: true }));
@@ -568,6 +591,7 @@ function showLogin(record) {
       setMode("w");
       toast("Writing mode unlocked");
       checkTokenAccess(token);
+      offerRestore();
     } catch (ex) {
       const wrong = ex.code === "bad-credentials";
       err.textContent = wrong ? "Incorrect username or password."
@@ -753,7 +777,7 @@ function dialog({ title, sub, input, confirm, danger, onSubmit }) {
     const value = field ? NotesWrite.cleanName(field.value) : undefined;
     err.textContent = "";
     [field, submit, cancel].forEach((el) => { if (el) el.disabled = true; });
-    submit.textContent = "Saving…";
+    submit.textContent = "Working…";
     try {
       await onSubmit(value);
       closeModal();
@@ -837,7 +861,7 @@ function addSubjectDialog() {
     input: { label: "Subject name", placeholder: "e.g. Operating Systems", validate: nameValidator(otherSubjects()) },
     confirm: "Create subject",
     onSubmit: async (name) => {
-      await applySave(await NotesWrite.addSubject(name));
+      await applyOp(await NotesWrite.run("addSubject", { name }));
       toast("Subject created");
       location.hash = `#/subject/${encodeURIComponent(name)}`;
     },
@@ -849,11 +873,11 @@ function renameSubjectDialog() {
   const topicId = currentTopicId;
   dialog({
     title: "Rename subject",
-    sub: `Everything inside <b>${esc(old)}</b> moves to the new name in a single save.`,
+    sub: `Everything inside <b>${esc(old)}</b> moves to the new name.`,
     input: { label: "Subject name", value: old, validate: nameValidator(otherSubjects(old), old) },
     confirm: "Rename",
     onSubmit: async (name) => {
-      await applySave(await NotesWrite.renameSubject(old, name));
+      await applyOp(await NotesWrite.run("renameSubject", { oldName: old, name }));
       forgetSubjectState(old, name);
       toast("Subject renamed");
       location.hash = `#/subject/${encodeURIComponent(name)}${topicId ? `/${topicId}` : ""}`;
@@ -871,7 +895,7 @@ function deleteSubjectDialog() {
     confirm: "Delete subject",
     danger: true,
     onSubmit: async () => {
-      await applySave(await NotesWrite.deleteSubject(name));
+      await applyOp(await NotesWrite.run("deleteSubject", { name }));
       forgetSubjectState(name, null);
       toast("Subject deleted");
       location.hash = "#/";
@@ -879,7 +903,7 @@ function deleteSubjectDialog() {
   });
 }
 
-/* ---------- chapters (Phase 6) ---------- */
+/* ---------- chapters (Phase 6, Phase 7) ---------- */
 const chapterByFolder = (folder) => (subj ? subj.chapters.find((c) => c.folder === folder) : null);
 const chapterLabel = (ch) => `Chapter ${pad(ch.num)} - ${esc(ch.name)}`;
 const topicChapterNum = (id) => (id ? parseInt(String(id).split(".")[0], 10) : NaN);
@@ -887,6 +911,30 @@ const topicChapterNum = (id) => (id ? parseInt(String(id).split(".")[0], 10) : N
 function openChapterNum() {
   const el = document.querySelector(".chapter.open");
   return el ? parseInt(el.dataset.ch, 10) : null;
+}
+
+/* Chapter numbers change in move / change number / delete. `map` is {oldNumber: newNumber}; topic ids start with the chapter number. */
+const remapId = (id, map) => {
+  if (!id || !map) return id;
+  const parts = String(id).split(".");
+  const n = map[parseInt(parts[0], 10)];
+  return n === undefined ? id : `${n}.${parts.slice(1).join(".")}`;
+};
+const remapNum = (n, map) => (n != null && map && map[n] !== undefined ? map[n] : n);
+const invertMap = (map) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [v, Number(k)]));
+function remapLastTopic(subjectName, map) {
+  const last = store.get(lastTopicKey(subjectName));
+  const next = remapId(last, map);
+  if (last && next !== last) store.set(lastTopicKey(subjectName), next);
+}
+
+/* Two chapter folders with one number (write mode warning, and these operations are refused). */
+const duplicateGroups = () => (subj ? subj.chapters.filter((c) => c.dups && c.dups.length).map((c) => [c.folder, ...c.dups]) : []);
+function blockedByDuplicates() {
+  const groups = duplicateGroups();
+  if (!groups.length) return false;
+  toast(NotesWrite.duplicateMessage(groups), 9000);
+  return true;
 }
 
 function numberValidator(usedByOthers, current) {
@@ -929,7 +977,7 @@ async function showSubjectAfterSave({ topicId, openNum }) {
     const opened = document.querySelector(".chapter.open");
     if (opened && openNum != null) opened.scrollIntoView({ block: "nearest" });
   } catch {
-    currentSubject = null; // the save worked; just load everything again from the repo
+    currentSubject = null; // the change worked; just load everything again
     route();
   }
 }
@@ -942,8 +990,8 @@ function addChapterDialog() {
     input: { label: "Chapter name", placeholder: "e.g. Introduction", validate: nameValidator([]) },
     confirm: "Create chapter",
     onSubmit: async (name) => {
-      const result = await NotesWrite.addChapter(subjectName, name);
-      await applySave(result);
+      const result = await NotesWrite.run("addChapter", { subject: subjectName, name });
+      await applyOp(result);
       toast(`Chapter ${pad(result.num)} created`);
       await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
     },
@@ -961,7 +1009,7 @@ function renameChapterDialog(folder) {
     confirm: "Rename",
     onSubmit: async (name) => {
       const openNum = openChapterNum();
-      await applySave(await NotesWrite.renameChapter(subjectName, folder, name));
+      await applyOp(await NotesWrite.run("renameChapter", { subject: subjectName, folder, name }));
       toast("Chapter renamed");
       await showSubjectAfterSave({ topicId: currentTopicId, openNum }); // topic ids do not change, so the open note stays open
     },
@@ -969,6 +1017,7 @@ function renameChapterDialog(folder) {
 }
 
 function changeChapterNumberDialog(folder) {
+  if (blockedByDuplicates()) return;
   const ch = chapterByFolder(folder);
   if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
   const subjectName = subj.name;
@@ -982,39 +1031,63 @@ function changeChapterNumberDialog(folder) {
     onSubmit: async (value) => {
       const newNum = parseInt(value, 10);
       const openNum = openChapterNum();
-      await applySave(await NotesWrite.changeChapterNumber(subjectName, folder, newNum));
+      const result = await NotesWrite.run("changeChapterNumber", { subject: subjectName, folder, newNum });
+      await applyOp(result);
 
       // topic ids and addresses start with the chapter number, so follow the open topic and the remembered one
-      const renumber = (id) => (topicChapterNum(id) === oldNum ? `${newNum}.${String(id).split(".")[1]}` : id);
-      const last = store.get(lastTopicKey(subjectName));
-      if (last && renumber(last) !== last) store.set(lastTopicKey(subjectName), renumber(last));
+      const map = result.map || { [oldNum]: newNum };
+      remapLastTopic(subjectName, map);
       toast("Chapter number changed");
-      await showSubjectAfterSave({ topicId: renumber(currentTopicId), openNum: openNum === oldNum ? newNum : openNum });
+      await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum: remapNum(openNum, map) });
     },
   });
 }
 
 function deleteChapterDialog(folder) {
+  if (blockedByDuplicates()) return;
   const ch = chapterByFolder(folder);
   if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
   const subjectName = subj.name;
   const oldNum = ch.num;
   dialog({
     title: "Delete this chapter?",
-    sub: `<b>${chapterLabel(ch)}</b> will be removed along with ${plural(ch.topics.length, "topic")}. You can still recover it from your repo's commit history.`,
+    sub: `<b>${chapterLabel(ch)}</b> will be removed along with ${plural(ch.topics.length, "topic")}. <b>Later chapters will be renumbered</b>: each one moves down by one number and its topics are renamed to match. You can still recover everything from your repo's commit history.`,
     confirm: "Delete chapter",
     danger: true,
     onSubmit: async () => {
       const openNum = openChapterNum();
-      await applySave(await NotesWrite.deleteChapter(subjectName, folder));
+      const result = await NotesWrite.run("deleteChapter", { subject: subjectName, folder });
+      await applyOp(result);
 
+      const map = result.map || {};
       const last = store.get(lastTopicKey(subjectName));
       if (last && topicChapterNum(last) === oldNum) { try { localStorage.removeItem(lastTopicKey(subjectName)); } catch { /* storage unavailable */ } }
+      else remapLastTopic(subjectName, map);
       const gone = topicChapterNum(currentTopicId) === oldNum;
       toast("Chapter deleted");
-      await showSubjectAfterSave({ topicId: gone ? null : currentTopicId, openNum: openNum === oldNum ? null : openNum });
+      await showSubjectAfterSave({ topicId: gone ? null : remapId(currentTopicId, map), openNum: openNum === oldNum ? null : remapNum(openNum, map) });
     },
   });
+}
+
+async function moveChapterAction(folder, dir) {
+  if (blockedByDuplicates()) return;
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  const openNum = openChapterNum();
+  let result;
+  try {
+    result = await NotesWrite.run("moveChapter", { subject: subjectName, folder, dir });
+  } catch (e) {
+    toast(e.message || "Could not move the chapter. Nothing was changed.", 5000);
+    return;
+  }
+  await applyOp(result);
+  const map = result.map || {};
+  remapLastTopic(subjectName, map);
+  toast(`Chapter moved ${dir}`);
+  await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum: remapNum(openNum, map) });
 }
 
 const ACTIONS = {
@@ -1023,8 +1096,266 @@ const ACTIONS = {
   "chapter:add": addChapterDialog,
   "chapter:rename": renameChapterDialog,
   "chapter:number": changeChapterNumberDialog,
+  "chapter:up": (folder) => moveChapterAction(folder, "up"),
+  "chapter:down": (folder) => moveChapterAction(folder, "down"),
   "chapter:delete": deleteChapterDialog,
 };
+
+/* ---------- staged changes UI (Phase 7, GitHub mode) ---------- */
+let sbError = "";
+let unloadOn = false;
+
+/* After a change is staged (nothing is committed yet): redraw from the virtual tree. */
+async function applyOp(result) {
+  if (result && result.staged) {
+    noteCache.clear();
+    DATA = await NotesData.loadData(); // the virtual tree: base + pending changes
+  } else {
+    await applySave(result); // local mode: already written to the folder
+  }
+}
+
+/* Brings the screen to the current data without losing the place (subject page) or re-renders the page. */
+async function redraw() {
+  if (subj && document.getElementById("index")) await showSubjectAfterSave({ topicId: currentTopicId, openNum: openChapterNum() });
+  else route();
+}
+
+function reloadView() {
+  noteCache.clear();
+  NotesData.resetData();
+  DATA = null;
+  currentSubject = null;
+  route();
+}
+
+function renderSaveBar() {
+  let bar = document.getElementById("savebar");
+  const n = NotesStage.count();
+  const show = mode === "w" && n > 0;
+  document.body.classList.toggle("has-savebar", show);
+  if (!show) {
+    if (bar) bar.remove();
+    sbError = "";
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "savebar";
+    bar.className = "savebar";
+    bar.setAttribute("role", "region");
+    bar.setAttribute("aria-label", "Unsaved changes");
+    document.body.appendChild(bar);
+  }
+  const saving = NotesStage.isSaving();
+  bar.classList.toggle("saving", saving);
+  bar.innerHTML = `
+    <span class="sb-count" title="${esc(NotesStage.labels().join("\n"))}">${saving ? "Saving…" : `${plural(n, "unsaved change")}`}</span>
+    <div class="sb-actions">
+      <button class="btn primary" id="sb-save"${saving ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button>
+      <button class="btn" id="sb-undo"${saving ? " disabled" : ""}>Undo last</button>
+      <button class="btn" id="sb-discard"${saving ? " disabled" : ""}>Discard</button>
+    </div>
+    <p class="sb-msg" role="alert">${esc(sbError)}</p>`;
+}
+
+/* The browser's own "Leave site?" prompt, registered only while changes are pending. */
+function onBeforeUnload(e) {
+  e.preventDefault();
+  e.returnValue = "";
+  return "";
+}
+function syncBeforeUnload() {
+  const want = NotesStage.count() > 0;
+  if (want && !unloadOn) { window.addEventListener("beforeunload", onBeforeUnload); unloadOn = true; }
+  else if (!want && unloadOn) { window.removeEventListener("beforeunload", onBeforeUnload); unloadOn = false; }
+}
+
+/* Save. Returns true when the pending list is gone (saved), false when it is kept (error shown). */
+async function doSave() {
+  if (NotesStage.isSaving()) return false;
+  if (!NotesStage.count()) return true;
+  sbError = "";
+  try {
+    const r = await NotesStage.save();
+    sbError = "";
+    if (r.treeSha) {
+      await applySave(r); // read the new committed tree
+    } else {
+      noteCache.clear();
+      NotesData.resetData();
+      try { DATA = await NotesData.loadData(); } catch { DATA = null; }
+    }
+    toast(r.noChanges ? "No net changes to save." : r.merged ? "Saved (merged with newer changes in the repository)" : "Saved", r.merged ? 5000 : 2600);
+    if (DATA) await redraw(); else reloadView();
+    return true;
+  } catch (e) {
+    if (e.code === "replay-failed") showReplayFailure(e.failures || []);
+    else sbError = e.message || "Could not save. Your changes are still here.";
+    renderSaveBar();
+    return false;
+  }
+}
+
+function showReplayFailure(failures) {
+  const wrap = openModal(`
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <h2 id="m-title">Some changes can't be saved</h2>
+      <p class="modal-sub">The notes repository was changed somewhere else, and ${failures.length === 1 ? "one of your changes no longer fits" : `${failures.length} of your changes no longer fit`}. <b>Nothing was saved</b>, and your changes are still here.</p>
+      <ul class="fail-list">${failures.map((f) => `<li><b>${esc(f.label)}</b><br>${esc(f.message)}</li>`).join("")}</ul>
+      <div class="modal-actions wrap">
+        <button class="btn" data-modal-close>Cancel (keep my changes)</button>
+        <button class="btn danger" id="rf-discard">Discard all and reload</button>
+      </div>
+    </div>`);
+  wrap.querySelector("#rf-discard").addEventListener("click", () => {
+    NotesStage.discard();
+    closeModal();
+    reloadView();
+    toast("Your changes were discarded and the latest version was loaded.", 4000);
+  });
+}
+
+/* After Undo or Discard: put the open page back where it belongs. `entries` = the removed operations, last one first. */
+async function settleAfterUndo(entries) {
+  if (!subj || !document.getElementById("index")) { route(); return; }
+  let name = subj.name;
+  let topic = currentTopicId;
+  let openNum = openChapterNum();
+  for (const e of entries) {
+    if (e.type === "renameSubject" && NotesWrite.cleanName(e.args.name) === name) { name = e.args.oldName; continue; }
+    if (e.out && e.out.map && e.args.subject === name) {
+      const inv = invertMap(e.out.map);
+      remapLastTopic(name, inv);
+      topic = remapId(topic, inv);
+      openNum = remapNum(openNum, inv);
+    }
+  }
+  const found = DATA && DATA.subjects.find((s) => s.name === name);
+  if (!found) { location.hash = "#/"; return; }
+  if (name !== subj.name) { location.hash = `#/subject/${encodeURIComponent(name)}${topic ? `/${topic}` : ""}`; return; }
+  await showSubjectAfterSave({ topicId: topic, openNum });
+}
+
+async function reloadDataAfterRemoval() {
+  noteCache.clear();
+  if (!NotesStage.count()) NotesData.resetData(); // nothing pending any more: read the repository again
+  DATA = await NotesData.loadData();
+}
+
+async function doUndo() {
+  if (NotesStage.isSaving()) return;
+  const entry = NotesStage.undoLast();
+  if (!entry) return;
+  sbError = "";
+  try {
+    await reloadDataAfterRemoval();
+    toast(`Undone: ${entry.label}`);
+    await settleAfterUndo([entry]);
+  } catch {
+    reloadView();
+  }
+}
+
+async function discardNow() {
+  const entries = NotesStage.discard().reverse();
+  sbError = "";
+  try {
+    await reloadDataAfterRemoval();
+    await settleAfterUndo(entries);
+  } catch {
+    reloadView();
+  }
+}
+
+function discardDialog() {
+  const n = NotesStage.count();
+  dialog({
+    title: "Discard all unsaved changes?",
+    sub: `${plural(n, "change")} will be thrown away and the notes go back to what is saved in the repository. This cannot be undone.`,
+    confirm: "Discard",
+    danger: true,
+    onSubmit: async () => { await discardNow(); toast("Changes discarded"); },
+  });
+}
+
+/* In-app exits that would drop the pending list (back to R, changing the notes repository):
+   our own Save / Discard / Cancel dialog. (Closing the tab can only get the browser's own prompt.) */
+function confirmLeave(what, proceed) {
+  const n = NotesStage.count();
+  if (!n || mode !== "w") { proceed(); return; }
+  modalReturnFocus = document.activeElement;
+  const wrap = openModal(`
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <h2 id="m-title">You have unsaved changes</h2>
+      <p class="modal-sub">${plural(n, "change")} ${n === 1 ? "is" : "are"} not saved yet. ${esc(what)} would lose ${n === 1 ? "it" : "them"} unless you save first.</p>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions wrap">
+        <button type="button" class="btn" data-lv="cancel">Cancel</button>
+        <button type="button" class="btn danger" data-lv="discard">Discard</button>
+        <button type="button" class="btn primary" data-lv="save">Save</button>
+      </div>
+    </div>`);
+  const err = wrap.querySelector(".form-error");
+  const buttons = [...wrap.querySelectorAll("[data-lv]")];
+  const busy = (on) => buttons.forEach((b) => { b.disabled = on; });
+  wrap.querySelector('[data-lv="cancel"]').addEventListener("click", () => closeModal());
+  wrap.querySelector('[data-lv="discard"]').addEventListener("click", async () => {
+    busy(true);
+    await discardNow();
+    closeModal();
+    proceed();
+  });
+  wrap.querySelector('[data-lv="save"]').addEventListener("click", async () => {
+    busy(true);
+    const ok = await doSave();
+    if (ok) { closeModal(); proceed(); return; }
+    if (document.getElementById("modal") === wrap) { err.textContent = sbError || "Could not save. Your changes are still here."; busy(false); }
+  });
+  wrap.querySelector('[data-lv="cancel"]').focus();
+}
+
+/* After login: changes kept in sessionStorage (refresh, or automatic lock) can be restored. */
+function offerRestore() {
+  if (NotesData.source() !== "github" || !NotesData.notesRepo() || NotesStage.count()) return;
+  const n = NotesStage.savedCount();
+  if (!n || !NotesStage.hasSaved()) return;
+  const wrap = openModal(`
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <h2 id="m-title">Restore unsaved changes?</h2>
+      <p class="modal-sub">${plural(n, "change")} from before the page was refreshed or locked ${n === 1 ? "was" : "were"} never saved. Restore ${n === 1 ? "it" : "them"} to continue?</p>
+      <div class="modal-actions wrap">
+        <button type="button" class="btn" data-rs="drop">Discard them</button>
+        <button type="button" class="btn primary" data-rs="restore">Restore</button>
+      </div>
+    </div>`);
+  wrap.querySelector('[data-rs="drop"]').addEventListener("click", () => { NotesStage.clearSaved(); closeModal(); });
+  wrap.querySelector('[data-rs="restore"]').addEventListener("click", async (ev) => {
+    ev.currentTarget.disabled = true;
+    ev.currentTarget.textContent = "Restoring…";
+    try {
+      const r = await NotesStage.restore();
+      noteCache.clear();
+      DATA = await NotesData.loadData();
+      closeModal();
+      await redraw();
+      if (r.failed.length) {
+        openModal(`
+          <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="m-title">
+            <h2 id="m-title">Some changes could not be restored</h2>
+            <p class="modal-sub">${r.restored} restored. These no longer fit the repository:</p>
+            <ul class="fail-list">${r.failed.map((f) => `<li><b>${esc(f.label)}</b><br>${esc(f.message)}</li>`).join("")}</ul>
+            <div class="modal-actions"><button class="btn primary" data-modal-close>OK</button></div>
+          </div>`);
+      } else {
+        toast(`Restored ${plural(r.restored, "change")}`);
+      }
+    } catch (e) {
+      closeModal();
+      toast(e.message || "Could not restore the changes.", 5000);
+    }
+  });
+}
 
 /* ---------- events (delegated) ---------- */
 document.addEventListener("click", (e) => {
@@ -1071,12 +1402,16 @@ document.addEventListener("click", (e) => {
 
   if (t.closest("[data-modal-close]")) { closeModal(); return; }
 
-  if (t.closest("#set-repo")) { openNotesRepoForm(); return; }
+  if (t.closest("#sb-save")) { doSave(); return; }
+  if (t.closest("#sb-undo")) { doUndo(); return; }
+  if (t.closest("#sb-discard")) { discardDialog(); return; }
+
+  if (t.closest("#set-repo")) { confirmLeave("Changing the notes repository", openNotesRepoForm); return; }
 
   const modeBtn = t.closest(".mode-btn");
   if (modeBtn) {
     if (modeBtn.dataset.mode === "w") requestWrite(modeBtn);
-    else setMode("r");
+    else confirmLeave("Switching back to read mode", () => setMode("r"));
     return;
   }
 
@@ -1095,6 +1430,7 @@ document.addEventListener("keydown", (e) => {
 
 NotesData.setTokenProvider(() => Auth.getToken());
 NotesWrite.setGuard(() => mode === "w"); // saving is only possible while writing mode is unlocked
+NotesStage.onChange(() => { renderSaveBar(); syncBeforeUnload(); });
 if (NotesData.source() === "local") Auth.setRecordLoader(() => NotesLocal.readRootFile("auth.json"));
 window.addEventListener("hashchange", route);
 window.addEventListener("resize", closeMenu);
