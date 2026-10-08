@@ -24,8 +24,51 @@
     ta.style.height = `${ta.scrollHeight + 2}px`;
   }
 
+  const dirOf = () => (s.path || "").slice(0, (s.path || "").lastIndexOf("/"));
+
+  /* Blocks view needs the exact text; false (and a notice) when it cannot split it safely. */
+  function showBlocks(notice) {
+    const text = s.ta.value;
+    let ok = false;
+    if (global.NotesBlocks) {
+      if (s.blocks) ok = s.blocks.setText(text);
+      else {
+        s.blocks = global.NotesBlocks.mount(s.host, {
+          text, dir: dirOf,
+          onChange: (t) => { s.ta.value = t; syncUnload(); }, // the textarea always holds the document text
+        });
+        ok = !!s.blocks;
+      }
+    }
+    if (!ok) { s.notice.textContent = notice; return false; }
+    s.notice.textContent = "";
+    s.view = "blocks";
+    s.ta.hidden = true;
+    s.host.hidden = false;
+    s.toggle.textContent = "Source";
+    return true;
+  }
+
+  function showSource() {
+    if (s.blocks) s.blocks.commit();
+    s.view = "source";
+    s.host.hidden = true;
+    s.ta.hidden = false;
+    s.toggle.textContent = "Blocks";
+    grow();
+    s.ta.focus();
+  }
+
+  function toggleView() {
+    if (!s || s.busy) return;
+    if (s.view === "blocks") showSource();
+    else showBlocks("This note uses syntax the block editor cannot split safely, so it stays as plain text.");
+  }
+
   function setBusy(on) {
     s.busy = on;
+    s.toggle.disabled = on;
+    if (s.blocks) s.blocks.setLocked(on);
     s.ta.readOnly = on;
     s.done.disabled = on;
     s.cancel.disabled = on;
@@ -35,6 +78,7 @@
   /* Removes the editor from the page and forgets the session (no callbacks). */
   function teardown() {
     if (!s) return;
+    if (s.blocks) s.blocks.destroy();
     const note = s.root.closest(".note");
     if (note) note.classList.remove("editing");
     s.root.remove();
@@ -50,6 +94,7 @@
 
   async function done() {
     if (!s || s.busy) return;
+    if (s.view === "blocks" && s.blocks) s.blocks.commit(); // an open block is applied first
     const content = s.ta.value;
     if (content === s.start) { finish(); return; } // nothing changed: stage nothing
     setBusy(true);
@@ -65,6 +110,7 @@
 
   function cancel() {
     if (!s || s.busy) return;
+    if (s.view === "blocks" && s.blocks) s.blocks.commit();
     if (isDirty()) s.opts.confirmDiscard(() => { if (s) finish(); });
     else finish();
   }
@@ -82,11 +128,14 @@
     const root = document.createElement("div");
     root.className = "editor";
     root.innerHTML = `
+      <p class="editor-notice"></p>
+      <div class="blocks-host"></div>
       <textarea class="editor-ta" spellcheck="false" autocapitalize="off" aria-label="Note text (Markdown)"></textarea>
       <p class="editor-error" role="alert"></p>
       <div class="editor-actions">
         <button type="button" class="btn primary" data-ed="done">Done</button>
         <button type="button" class="btn" data-ed="cancel">Cancel</button>
+        <button type="button" class="btn ed-toggle" data-ed="mode">Source</button>
       </div>`;
     const ta = root.querySelector("textarea");
     ta.value = typeof opts.text === "string" ? opts.text : "";
@@ -95,6 +144,10 @@
       err: root.querySelector(".editor-error"),
       done: root.querySelector('[data-ed="done"]'),
       cancel: root.querySelector('[data-ed="cancel"]'),
+      toggle: root.querySelector('[data-ed="mode"]'),
+      host: root.querySelector(".blocks-host"),
+      notice: root.querySelector(".editor-notice"),
+      blocks: null, view: "source",
     };
     ta.addEventListener("input", () => { grow(); syncUnload(); });
     ta.addEventListener("keydown", (e) => {
@@ -105,8 +158,10 @@
     });
     s.done.addEventListener("click", done);
     s.cancel.addEventListener("click", cancel);
+    s.toggle.addEventListener("click", toggleView);
     mount(container);
-    ta.focus();
+    if (showBlocks("This note uses syntax the block editor cannot split safely, so it opened as plain text.")) ta.hidden = true;
+    else { s.host.hidden = true; s.toggle.hidden = true; ta.focus(); } // no block view for this note
     return true;
   }
 

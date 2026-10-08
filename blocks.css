@@ -1,0 +1,74 @@
+/* Phase 9B: block-level live editor */
+
+.blocks { display: block; }
+
+.blk {
+  position: relative;
+  margin: 0 0 6px;
+  padding: 6px 12px 6px 11px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  cursor: text;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.blk > .md { pointer-events: auto; }
+.blk:not(.editing):hover { border-color: rgba(255, 255, 255, 0.1); border-left-color: rgba(138, 180, 255, 0.5); background: rgba(255, 255, 255, 0.015); }
+.blk:not(.editing):active, .blk:not(.editing):focus-visible { border-color: rgba(138, 180, 255, 0.35); border-left-color: var(--accent); background: rgba(138, 180, 255, 0.05); }
+.blk:focus-visible { outline: none; }
+
+/* editing: same box, so the layout does not jump */
+.blk.editing { padding: 0; border-color: transparent; cursor: auto; }
+.blk-ta {
+  display: block;
+  width: 100%;
+  min-height: 3em;
+  margin: 0;
+  padding: 6px 12px 6px 11px;
+  resize: none;
+  overflow: hidden;
+  background: #0a0a0d;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-left-width: 3px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.blk-ta:focus { outline: none; }
+
+.blk-raw { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: 13.5px; color: var(--text-muted); }
+
+/* the quiet slot after the last block */
+.blk-add {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
+  opacity: 0.55;
+  font-size: 14px;
+  cursor: text;
+  transition: opacity 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.blk-add:hover, .blk-add:focus-visible { opacity: 1; border-color: var(--border); outline: none; }
+
+.blocks.locked { opacity: 0.65; pointer-events: none; }
+
+/* editor chrome added in 9B */
+.editor-notice { margin: 0 0 10px; color: var(--text-muted); font-size: 13.5px; }
+.editor-notice:empty { display: none; }
+.editor-actions .ed-toggle { margin-left: auto; }
+.editor-ta[hidden], .blocks-host[hidden], .ed-toggle[hidden] { display: none; }
+
+/* Done: a clear solid accent button */
+.editor-actions .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0e0e11;
+  font-weight: 600;
+}
+.editor-actions .btn.primary:hover:not(:disabled) { background: #a6c4ff; border-color: #a6c4ff; color: #0e0e11; }
+.editor-actions .btn.primary:disabled { background: rgba(138, 180, 255, 0.35); border-color: transparent; color: rgba(14, 14, 17, 0.75); opacity: 1; }
