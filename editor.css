@@ -1,0 +1,57 @@
+/* Phase 9A: Markdown editor for a note */
+
+.note-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.note-title-row h1 { margin: 0; flex: 1; min-width: 0; }
+
+.edit-note-btn {
+  flex: none;
+  margin-top: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.edit-note-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
+
+/* the button is not offered while the editor is open (beats the .w-only display rule) */
+.note.editing .edit-note-btn.w-only { display: none !important; }
+
+.editor { display: block; }
+
+.editor-ta {
+  display: block;
+  width: 100%;
+  min-height: 16em;
+  padding: 14px 16px;
+  resize: none;
+  overflow: hidden;
+  background: #0a0a0d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  transition: border-color 0.18s var(--ease);
+}
+.editor-ta:focus { outline: none; border-color: var(--accent); }
+.editor-ta:read-only { opacity: 0.65; }
+
+.editor-error { margin: 8px 0 0; min-height: 0; color: #ff8a8a; font-size: 14px; }
+.editor-error:empty { display: none; }
+
+.editor-actions { display: flex; gap: 10px; margin-top: 14px; }
+.editor-actions .btn:disabled { opacity: 0.6; cursor: default; }
+.editor-actions .btn.primary { border-color: var(--accent); color: var(--accent); }
+.editor-actions .btn.primary:hover:not(:disabled) { background: rgba(138, 180, 255, 0.1); }

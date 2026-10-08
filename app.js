@@ -85,6 +85,10 @@ function setMode(next) {
   document.querySelectorAll(".mode-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   if (mode === "r") {
     closeMenu();
+    if (NotesEditor.isOpen()) { // the editor needs write mode; the rendered note comes back
+      NotesEditor.close();
+      if (subj && document.getElementById("note-scroll")) showTopic(currentTopicId);
+    }
     if (NotesStage.count()) NotesStage.suspend(); // pending changes stay in sessionStorage (descriptors only) and can be restored after login
     Auth.lock(); // leaving write mode forgets the token
   }
@@ -379,6 +383,7 @@ async function showTopic(id) {
   const idx = id ? list.findIndex((t) => t.id === id) : -1;
   const enc = encodeURIComponent(subj.name);
   currentTopicId = idx === -1 ? null : id;
+  if (idx === -1 && NotesEditor.isOpen()) NotesEditor.close();
 
   if (idx === -1) {
     const last = store.get(lastTopicKey(subj.name));
@@ -415,7 +420,10 @@ async function showTopic(id) {
   host.innerHTML = `
     <article class="note">
       <div class="crumbs">${esc(subj.name)} / Chapter ${pad(t.chapter.num)} - ${esc(t.chapter.name)}</div>
-      <h1>${esc(t.label)}</h1>
+      <div class="note-title-row">
+        <h1>${esc(t.label)}</h1>
+        <button type="button" class="edit-note-btn w-only" id="edit-note">Edit</button>
+      </div>
       <div id="note-body">
         <span class="sk sk-line" style="width:92%"></span>
         <span class="sk sk-line" style="width:84%"></span>
@@ -429,6 +437,10 @@ async function showTopic(id) {
     </article>`;
 
   const body = host.querySelector("#note-body");
+  if (NotesEditor.isOpen()) {
+    if (NotesEditor.id() === t.id) { NotesEditor.setPath(t.path); NotesEditor.remount(body); return; } // a dock action redrew the page: the editor stays as it is
+    NotesEditor.close();
+  }
   try {
     let text = noteCache.get(t.path);
     if (text === undefined) {
@@ -466,6 +478,7 @@ async function route() {
   const token = ++routeToken;
   closeMenu();
   const m = (location.hash || "#/").match(/^#\/subject\/([^/]+)(?:\/(.+))?$/);
+  if (NotesEditor.isOpen() && !(m && decodeURIComponent(m[1]) === currentSubject)) NotesEditor.close(); // any dirty text was confirmed before this point
 
   if (!DATA) {
     showSkeleton(m ? "subject" : "home");
@@ -1461,6 +1474,85 @@ function confirmLeave(what, proceed) {
   wrap.querySelector('[data-lv="cancel"]').focus();
 }
 
+/* ---------- Phase 9A: editing a note as Markdown ---------- */
+
+/* Asks before unsaved editor text is thrown away. Same dialog pattern as confirmLeave. */
+function confirmDiscardEdits(proceed) {
+  modalReturnFocus = document.activeElement;
+  const wrap = openModal(`
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <h2 id="m-title">Discard your edits to this note?</h2>
+      <p class="modal-sub">The text you typed is not part of your changes yet. Press Done in the editor to keep it.</p>
+      <div class="modal-actions wrap">
+        <button type="button" class="btn" data-ed-keep>Keep editing</button>
+        <button type="button" class="btn danger" data-ed-discard>Discard edits</button>
+      </div>
+    </div>`);
+  wrap.querySelector("[data-ed-keep]").addEventListener("click", () => closeModal());
+  wrap.querySelector("[data-ed-discard]").addEventListener("click", () => { closeModal(); proceed(); });
+  wrap.querySelector("[data-ed-keep]").focus();
+}
+
+/* Runs proceed() at once unless the editor holds unsaved text. */
+function guardEditor(proceed) {
+  if (NotesEditor.isDirty()) confirmDiscardEdits(proceed);
+  else proceed();
+}
+
+/* Stages the edit. A repeated edit of the same note replaces the previous staged edit instead of piling up. */
+async function saveNoteEdit(path, content) {
+  const list = NotesStage.entries();
+  const last = list[list.length - 1];
+  let replaced = null;
+  if (last && last.type === "editNote" && last.args.path === path) replaced = NotesStage.undoLast();
+  try {
+    await applyOp(await NotesWrite.run("editNote", { path, content }));
+  } catch (e) {
+    if (replaced) { try { await NotesWrite.run("editNote", replaced.args); } catch { /* keep the original error */ } } // put the earlier edit back
+    throw e;
+  }
+}
+
+async function startNoteEdit() {
+  if (mode !== "w" || NotesEditor.isOpen() || !subj || !currentTopicId) return;
+  const t = flatTopics(subj).find((x) => x.id === currentTopicId);
+  const body = document.getElementById("note-body");
+  if (!t || !body) return;
+  try {
+    let text = noteCache.get(t.path);
+    if (text === undefined) { text = await NotesData.loadNote(t.path); noteCache.set(t.path, text); }
+    if (NotesEditor.isOpen() || !document.getElementById("note-body") || currentTopicId !== t.id) return;
+    NotesEditor.open(document.getElementById("note-body"), {
+      id: t.id,
+      path: t.path,
+      text,
+      confirmDiscard: confirmDiscardEdits,
+      onDone: (content) => saveNoteEdit(NotesEditor.path(), content),
+      onClosed: () => { if (subj && document.getElementById("note-scroll")) showTopic(currentTopicId); }, // the rendered note comes back from the newest text
+    });
+  } catch (err) {
+    toast(err.message || "Could not open the note for editing.");
+  }
+}
+
+/* Navigation while editing: put the address back, ask, and only then go on. */
+function onHashChange() {
+  if (NotesEditor.isDirty() && subj) {
+    const here = `#/subject/${encodeURIComponent(subj.name)}/${currentTopicId}`;
+    if (location.hash !== here) {
+      const target = location.hash;
+      history.replaceState(null, "", `${location.pathname}${location.search}${here}`);
+      confirmDiscardEdits(() => {
+        NotesEditor.close();
+        history.replaceState(null, "", `${location.pathname}${location.search}${target}`);
+        route();
+      });
+      return;
+    }
+  }
+  route();
+}
+
 /* After login: changes kept in sessionStorage (refresh, or automatic lock) can be restored. */
 function offerRestore() {
   if (NotesData.source() !== "github" || !NotesData.notesRepo() || NotesStage.count()) return;
@@ -1553,12 +1645,14 @@ document.addEventListener("click", (e) => {
   if (t.closest("#sb-undo")) { doUndo(); return; }
   if (t.closest("#sb-discard")) { discardDialog(); return; }
 
-  if (t.closest("#set-repo")) { confirmLeave("Changing the notes repository", openNotesRepoForm); return; }
+  if (t.closest("#edit-note")) { startNoteEdit(); return; }
+
+  if (t.closest("#set-repo")) { guardEditor(() => confirmLeave("Changing the notes repository", () => { NotesEditor.close(); openNotesRepoForm(); })); return; }
 
   const modeBtn = t.closest(".mode-btn");
   if (modeBtn) {
     if (modeBtn.dataset.mode === "w") requestWrite(modeBtn);
-    else confirmLeave("Switching back to read mode", () => setMode("r"));
+    else guardEditor(() => confirmLeave("Switching back to read mode", () => setMode("r")));
     return;
   }
 
@@ -1579,6 +1673,6 @@ NotesData.setTokenProvider(() => Auth.getToken());
 NotesWrite.setGuard(() => mode === "w"); // saving is only possible while writing mode is unlocked
 NotesStage.onChange(() => { renderDock(); syncBeforeUnload(); });
 if (NotesData.source() === "local") Auth.setRecordLoader(() => NotesLocal.readRootFile("auth.json"));
-window.addEventListener("hashchange", route);
+window.addEventListener("hashchange", onHashChange);
 window.addEventListener("resize", closeMenu);
 route();

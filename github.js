@@ -640,6 +640,21 @@
         return keepSubjectAlive(entries, a.subject, changes);
       },
     },
+
+    /* Replaces the text of one existing topic note. The text is kept exactly as typed (no trimming). */
+    editNote: {
+      label: (a) => `Edit note "${String(a.path || "").split("/").pop().replace(/\.md$/i, "").replace(/^\d+\.\d+\s+/, "")}"`,
+      plan(entries, a) {
+        if (typeof a.content !== "string") throw fail("invalid", "The note text is not valid.");
+        const path = typeof a.path === "string" ? a.path : "";
+        const prefix = `${D.root}/`;
+        const rel = path.startsWith(prefix) ? path.slice(prefix.length).split("/") : [];
+        if (rel.length !== 3 || !rel[0] || !CHAPTER_RE.test(rel[1]) || !TOPIC_FILE_RE.test(rel[2])) throw fail("invalid", "Only topic notes can be edited.");
+        const cur = entries.find((e) => e.type === "blob" && e.path === path);
+        if (!cur) throw fail("missing", "This note no longer exists.");
+        return [{ path, mode: cur.mode || "100644", type: "blob", content: a.content }];
+      },
+    },
   };
 
   /* ---------- running an operation ----------
