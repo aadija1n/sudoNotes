@@ -1,11 +1,11 @@
 /* Phase 3 / 5R: real data from the notes repository, rendered markdown.
-   Editing menus are still previews (they show which phase makes them work). */
+   Phase 8B: chapter and topic menus are live. Only menu entries without an action (none left) would still show a preview toast. */
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
   subject: [["Insert new chapter", 0, "", "chapter:add"], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
-  chapter: [["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Move up", 0, "", "chapter:up"], ["Move down", 0, "", "chapter:down"], ["Delete chapter", 0, "danger", "chapter:delete"]],
-  topic: [["Rename", 8], ["Move up", 8], ["Move down", 8], ["Delete", 8, "danger"]],
+  chapter: [["Add topic", 0, "", "topic:add"], ["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Move up", 0, "", "chapter:up"], ["Move down", 0, "", "chapter:down"], ["Delete chapter", 0, "danger", "chapter:delete"]],
+  topic: [["Rename", 0, "", "topic:rename"], ["Move up", 0, "", "topic:up"], ["Move down", 0, "", "topic:down"], ["Delete", 0, "danger", "topic:delete"]],
 };
 
 const app = document.getElementById("app");
@@ -39,6 +39,14 @@ function toast(message, ms = 2600) {
     el.classList.add("out");
     setTimeout(() => el.remove(), 260);
   }, ms);
+}
+
+const topicFile = (t) => t.path.slice(t.path.lastIndexOf("/") + 1);
+/* Groups of topic file names that share one index in a chapter, e.g. [["1.2 A.md", "1.2 B.md"]]. */
+function topicDupGroups(ch) {
+  const by = new Map();
+  for (const t of ch.topics) by.set(t.idx, [...(by.get(t.idx) || []), topicFile(t)]);
+  return [...by.values()].filter((g) => g.length > 1);
 }
 
 function flatTopics(s) {
@@ -100,11 +108,18 @@ function openMenu(btn, type) {
   menuEl.dataset.owner = btn.dataset.uid;
   const chapterEl = btn.closest(".chapter");
   menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : ""; // which chapter a chapter menu acts on
+  const topicLink = type === "topic" ? btn.closest("li").querySelector(".topic") : null;
+  menuEl.dataset.file = topicLink ? topicLink.dataset.file || "" : ""; // which topic file a topic menu acts on
   menuEl.setAttribute("role", "menu");
   let items = MENUS[type];
   if (type === "chapter" && subj) { // the first chapter has no "Move up", the last has no "Move down" (hidden)
     const i = subj.chapters.findIndex((c) => c.folder === menuEl.dataset.folder);
     items = items.filter((it) => !(it[3] === "chapter:up" && i === 0) && !(it[3] === "chapter:down" && i === subj.chapters.length - 1));
+  }
+  if (type === "topic" && subj) { // the first topic has no "Move up", the last has no "Move down" (hidden)
+    const ch = chapterByFolder(menuEl.dataset.folder);
+    const i = ch ? ch.topics.findIndex((t) => topicFile(t) === menuEl.dataset.file) : -1;
+    if (i !== -1) items = items.filter((it) => !(it[3] === "topic:up" && i === 0) && !(it[3] === "topic:down" && i === ch.topics.length - 1));
   }
   menuEl.innerHTML = items
     .map(([label, phase, cls, action]) => `<button role="menuitem" class="${cls || ""}" data-phase="${phase}" data-action="${action || ""}" data-label="${esc(label)}">${esc(label)}</button>`)
@@ -296,7 +311,7 @@ function buildSubject(found) {
       </div>
       <div class="topics"><div class="topics-inner"><ul>
         ${ch.topics.length ? ch.topics.map((t) => `
-          <li><a class="topic" data-id="${t.id}" href="#/subject/${enc}/${t.id}">${t.id} ${esc(t.title)}</a>
+          <li><a class="topic" data-id="${t.id}" data-idx="${t.idx}" data-file="${esc(topicFile(t))}" href="#/subject/${enc}/${t.id}">${t.id} ${esc(t.title)}</a>
             <button class="dots w-only" data-menu="topic" aria-label="Topic options">⋯</button></li>`).join("")
           : `<li class="empty-note" style="padding:6px 10px;font-size:13px">No topics yet</li>`}
       </ul></div></div>
@@ -306,6 +321,8 @@ function buildSubject(found) {
   const dupHtml = dupGroups.length
     ? `<div class="dup-warning w-only" role="alert"><p><b>Two chapter folders share a number.</b></p>${dupGroups.map((g) => `<p>${g.map((f) => `<b>${esc(f)}</b>`).join(" and ")} use the same chapter number, so they are merged in this list.</p>`).join("")}<p>Rename one of the folders in your notes repository or notes folder. Until then, Move, Delete and Change number are turned off for this subject.</p></div>`
     : "";
+  // Phase 8B: two topic files with one index in a chapter
+  const topicDupHtml = found.chapters.filter((c) => c.topicDups && c.topicDups.length).map((c) => `<div class="dup-warning w-only topic-dup" role="alert"><p><b>Two topics in ${chapterLabel(c)} share a number.</b></p>${topicDupGroups(c).map((g) => `<p>${g.map((f) => `<b>${esc(f)}</b>`).join(" and ")} use the same topic number.</p>`).join("")}<p>Rename one of the files in your notes repository or notes folder. Until then, Move up, Move down and Delete are turned off for this chapter (Rename still works).</p></div>`).join("");
 
   app.innerHTML = `
     <div class="shell">
@@ -325,7 +342,7 @@ function buildSubject(found) {
           <span>${esc(name)}</span>
           <button type="button" class="mb-pending" id="mb-pending" hidden></button>
         </div>
-        ${dupHtml}
+        ${dupHtml}${topicDupHtml}
         <div class="note-scroll" id="note-scroll"></div>
         <div class="add-bar w-only"><button id="add-content" aria-label="Add content" title="Add content">+</button></div>
       </section>
@@ -934,12 +951,13 @@ function openChapterNum() {
 /* Chapter numbers change in move / change number / delete. `map` is {oldNumber: newNumber}; topic ids start with the chapter number. */
 const remapId = (id, map) => {
   if (!id || !map) return id;
+  if (Object.prototype.hasOwnProperty.call(map, String(id))) return map[String(id)]; // a topic id map: {"2.1": "2.2"}
   const parts = String(id).split(".");
   const n = map[parseInt(parts[0], 10)];
   return n === undefined ? id : `${n}.${parts.slice(1).join(".")}`;
 };
 const remapNum = (n, map) => (n != null && map && map[n] !== undefined ? map[n] : n);
-const invertMap = (map) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [v, Number(k)]));
+const invertMap = (map) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [v, /^\d+$/.test(k) ? Number(k) : k])); // chapter maps are numbers, topic maps are ids
 function remapLastTopic(subjectName, map) {
   const last = store.get(lastTopicKey(subjectName));
   const next = remapId(last, map);
@@ -1108,7 +1126,113 @@ async function moveChapterAction(folder, dir) {
   await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum: remapNum(openNum, map) });
 }
 
+/* ---------- topics (Phase 8B) ---------- */
+function blockedByTopicDuplicates(ch) {
+  const groups = topicDupGroups(ch);
+  if (!groups.length) return false;
+  toast(NotesWrite.topicDuplicateMessage(groups), 9000);
+  return true;
+}
+
+/* The chapter and topic a topic menu acted on, from the current data (null + a toast when they are gone). */
+function topicTarget(folder, file) {
+  const ch = chapterByFolder(folder);
+  const t = ch ? ch.topics.find((x) => topicFile(x) === file) : null;
+  if (!ch || !t) { toast("That topic is not in the list any more. Reload the page."); return null; }
+  return { ch, t };
+}
+
+function addTopicDialog(folder) {
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  const nextIdx = ch.topics.length ? Math.max(...ch.topics.map((t) => t.idx)) + 1 : 1;
+  dialog({
+    title: "Add topic",
+    sub: `Give the topic a title. It is added to <b>${chapterLabel(ch)}</b> as <b>${ch.num}.${nextIdx}</b> and starts empty. To put it somewhere in between, add it and then use Move up or Move down.`,
+    input: { label: "Topic title", placeholder: "e.g. Variables", validate: nameValidator([]) },
+    confirm: "Add topic",
+    onSubmit: async (title) => {
+      const result = await NotesWrite.run("addTopic", { subject: subjectName, folder, title });
+      await applyOp(result);
+      toast(`Topic ${result.id} added`);
+      await showSubjectAfterSave({ topicId: result.id, openNum: result.num });
+    },
+  });
+}
+
+function renameTopicDialog(folder, file) {
+  const target = topicTarget(folder, file);
+  if (!target) return;
+  const { t } = target;
+  const subjectName = subj.name;
+  dialog({
+    title: "Rename topic",
+    sub: `Only the title of <b>${esc(t.id)} ${esc(t.title)}</b> changes. Its number stays <b>${esc(t.id)}</b>.`,
+    input: { label: "Topic title", value: t.title, validate: nameValidator([], t.title) },
+    confirm: "Rename",
+    onSubmit: async (title) => {
+      const openNum = openChapterNum();
+      await applyOp(await NotesWrite.run("renameTopic", { subject: subjectName, folder, file, title }));
+      toast("Topic renamed");
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum }); // the topic id does not change
+    },
+  });
+}
+
+async function moveTopicAction(folder, file, dir) {
+  if (blockedByDuplicates()) return;
+  const target = topicTarget(folder, file);
+  if (!target || blockedByTopicDuplicates(target.ch)) return;
+  const subjectName = subj.name;
+  const openNum = openChapterNum();
+  let result;
+  try {
+    result = await NotesWrite.run("moveTopic", { subject: subjectName, folder, file, dir });
+  } catch (e) {
+    toast(e.message || "Could not move the topic. Nothing was changed.", 5000);
+    return;
+  }
+  await applyOp(result);
+  const map = result.map || {};
+  remapLastTopic(subjectName, map);
+  toast(`Topic moved ${dir}`);
+  await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum });
+}
+
+function deleteTopicDialog(folder, file) {
+  if (blockedByDuplicates()) return;
+  const target = topicTarget(folder, file);
+  if (!target || blockedByTopicDuplicates(target.ch)) return;
+  const { ch, t } = target;
+  const subjectName = subj.name;
+  const later = ch.topics.filter((x) => x.idx > t.idx).length;
+  dialog({
+    title: "Delete this topic?",
+    sub: `<b>${esc(t.id)} ${esc(t.title)}</b> will be removed. <b>Later topics in this chapter will be renumbered</b>${later ? ` (${plural(later, "topic")} move down by one number and their files are renamed)` : ""}. You can still recover it from your repo's commit history.`,
+    confirm: "Delete topic",
+    danger: true,
+    onSubmit: async () => {
+      const openNum = openChapterNum();
+      const result = await NotesWrite.run("deleteTopic", { subject: subjectName, folder, file });
+      await applyOp(result);
+      const map = result.map || {};
+      const last = store.get(lastTopicKey(subjectName));
+      if (last && last === result.removed) { try { localStorage.removeItem(lastTopicKey(subjectName)); } catch { /* storage unavailable */ } }
+      else remapLastTopic(subjectName, map);
+      const gone = currentTopicId === result.removed;
+      toast("Topic deleted");
+      await showSubjectAfterSave({ topicId: gone ? null : remapId(currentTopicId, map), openNum });
+    },
+  });
+}
+
 const ACTIONS = {
+  "topic:add": addTopicDialog,
+  "topic:rename": renameTopicDialog,
+  "topic:up": (folder, file) => moveTopicAction(folder, file, "up"),
+  "topic:down": (folder, file) => moveTopicAction(folder, file, "down"),
+  "topic:delete": deleteTopicDialog,
   "subject:rename": renameSubjectDialog,
   "subject:delete": deleteSubjectDialog,
   "chapter:add": addChapterDialog,
@@ -1241,6 +1365,11 @@ async function settleAfterUndo(entries) {
   let openNum = openChapterNum();
   for (const e of entries) {
     if (e.type === "renameSubject" && NotesWrite.cleanName(e.args.name) === name) { name = e.args.oldName; continue; }
+    if (e.type === "addTopic" && e.out && e.args.subject === name) { // the new topic is gone again
+      if (topic === e.out.id) topic = null;
+      if (store.get(lastTopicKey(name)) === e.out.id) { try { localStorage.removeItem(lastTopicKey(name)); } catch { /* storage unavailable */ } }
+      continue;
+    }
     if (e.out && e.out.map && e.args.subject === name) {
       const inv = invertMap(e.out.map);
       remapLastTopic(name, inv);
@@ -1382,8 +1511,9 @@ document.addEventListener("click", (e) => {
   if (menuItem) {
     const action = ACTIONS[menuItem.dataset.action];
     const folder = menuEl ? menuEl.dataset.folder || "" : ""; // read before the menu is removed
+    const file = menuEl ? menuEl.dataset.file || "" : "";
     closeMenu();
-    if (action) action(folder);
+    if (action) action(folder, file);
     else toast(`"${menuItem.dataset.label}" arrives in Phase ${menuItem.dataset.phase}`);
     return;
   }

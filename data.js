@@ -203,7 +203,14 @@ ${mode}};
           name: s.name,
           chapters: [...s.chapters.values()]
             .sort((a, b) => a.num - b.num)
-            .map((c) => ({ ...c, topics: c.topics.sort((a, b) => a.idx - b.idx) })),
+            .map((c) => {
+              const topics = c.topics.sort((a, b) => a.idx - b.idx);
+              // Phase 8B: topic indexes that more than one file uses (for example "1.2 A.md" and "1.2 B.md")
+              const seen = new Set();
+              const topicDups = [];
+              for (const t of topics) { if (seen.has(t.idx) && !topicDups.includes(t.idx)) topicDups.push(t.idx); seen.add(t.idx); }
+              return { ...c, topics, topicDups };
+            }),
         }))
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     };

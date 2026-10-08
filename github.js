@@ -347,6 +347,69 @@
     return { removals, adds, folder: newFolder };
   }
 
+  /* ---------- topics (Phase 8B) ----------
+     A topic is a file "N.M Title.md" directly inside a chapter folder. Only such files are touched by topic
+     operations; .gitkeep, images and subfolders are never renamed or deleted by them. A topic is found by its
+     file name (not only its index) so two files that share an index can still be told apart (rename stays allowed). */
+  const TOPIC_PARSE_RE = /^(\d+)\.(\d+)(\s+(.+)\.md)$/i; // [2] index, [3] " Title.md" (kept as written), [4] title
+
+  function topicsIn(entries, subject, folder) {
+    const dir = `${D.root}/${subject}/${folder}`;
+    const topics = [];
+    for (const e of entries) {
+      if (e.type !== "blob" || !e.path.startsWith(`${dir}/`)) continue;
+      const file = e.path.slice(dir.length + 1);
+      if (file.includes("/")) continue;
+      const m = file.match(TOPIC_PARSE_RE);
+      if (!m) continue;
+      topics.push({ entry: e, file, idx: parseInt(m[2], 10), rest: m[3], title: m[4].trim() });
+    }
+    topics.sort((a, b) => a.idx - b.idx || (a.file < b.file ? -1 : 1));
+    return { dir, topics };
+  }
+
+  function topicDuplicateGroups(topics) {
+    const byIdx = new Map();
+    for (const t of topics) byIdx.set(t.idx, [...(byIdx.get(t.idx) || []), t.file]);
+    return [...byIdx.values()].filter((g) => g.length > 1);
+  }
+
+  function topicDuplicateMessage(groups) {
+    const names = groups.map((g) => g.map((f) => `"${f}"`).join(" and ")).join("; ");
+    return `Two topic files in this chapter share the same number (${names}). Rename one of those files so each topic has its own number (in your notes repository or your notes folder), then try again. Moving and deleting topics is turned off for this chapter until then.`;
+  }
+
+  function assertNoTopicDuplicates(topics) {
+    const groups = topicDuplicateGroups(topics);
+    if (groups.length) throw fail("duplicate", topicDuplicateMessage(groups));
+  }
+
+  function findTopic(topics, file) {
+    const t = topics.find((x) => x.file === file);
+    if (!t) throw fail("missing", "That topic no longer exists in the repo (it may have been changed in another window). Reload the page.");
+    return t;
+  }
+
+  /* Checks a title and returns the clean one. The file name must parse back to exactly this title. */
+  function checkTopicTitle(raw) {
+    const title = cleanName(raw);
+    const err = validateName(title, null, "topic");
+    if (err) throw fail("invalid", err);
+    const m = `1.1 ${title}.md`.match(TOPIC_PARSE_RE);
+    if (!m || m[4].trim() !== title) throw fail("invalid", "That title cannot be used as a file name.");
+    return title;
+  }
+
+  /* A chapter folder that a change would empty would vanish (git and the offline folder drop empty folders),
+     so the same change also writes <chapter>/.gitkeep. Not added while the chapter still has any file. */
+  function keepChapterAlive(entries, subject, folder, changes) {
+    const prefix = `${D.root}/${subject}/${folder}/`;
+    const gone = new Set(changes.filter((c) => c.sha === null).map((c) => c.path));
+    const stays = entries.some((e) => e.type === "blob" && e.path.startsWith(prefix) && !gone.has(e.path));
+    const arrives = changes.some((c) => c.sha !== null && c.path.startsWith(prefix));
+    return stays || arrives ? changes : [...changes, gitkeep(`${prefix}.gitkeep`)];
+  }
+
   const OPS = {
     addSubject: {
       label: (a) => `Add subject: ${cleanName(a.name)}`,
@@ -490,6 +553,93 @@
         return [...mine.removals, ...theirs.removals, ...mine.adds, ...theirs.adds];
       },
     },
+
+    /* ---------- topics (Phase 8B) ---------- */
+
+    /* Index = highest index in the chapter + 1 (first topic is N.1). Never reuses an index. The file starts empty. */
+    addTopic: {
+      label: (a) => `Add topic: ${cleanName(a.title)} (${a.folder})`,
+      plan(entries, a, out) {
+        const title = checkTopicTitle(a.title);
+        const { chapter } = findChapter(entries, a.subject, a.folder);
+        const { dir, topics } = topicsIn(entries, a.subject, a.folder);
+        const idx = topics.length ? Math.max(...topics.map((t) => t.idx)) + 1 : 1;
+        const file = `${chapter.num}.${idx} ${title}.md`;
+        out.num = chapter.num;
+        out.idx = idx;
+        out.id = `${chapter.num}.${idx}`;
+        out.file = file;
+        return [{ path: `${dir}/${file}`, mode: "100644", type: "blob", content: "" }];
+      },
+    },
+
+    /* Changes only the title part. The index stays, so the topic id and the address do not change. */
+    renameTopic: {
+      label: (a) => `Rename topic: ${a.file} → ${cleanName(a.title)}`,
+      plan(entries, a, out) {
+        const title = checkTopicTitle(a.title);
+        const { chapter } = findChapter(entries, a.subject, a.folder);
+        const { dir, topics } = topicsIn(entries, a.subject, a.folder);
+        const mine = findTopic(topics, a.file);
+        const file = `${chapter.num}.${mine.idx} ${title}.md`;
+        if (file === mine.file) throw fail("invalid", "That is already the title of this topic.");
+        const taken = entries.some((e) => e.type === "blob" && e.path.toLowerCase() === `${dir}/${file}`.toLowerCase() && e.path !== mine.entry.path);
+        if (taken) throw fail("invalid", "Another file in this chapter already has that name.");
+        out.id = `${chapter.num}.${mine.idx}`;
+        out.file = file;
+        return [removal(mine.entry), moved(mine.entry, `${dir}/${file}`)];
+      },
+    },
+
+    /* Swaps indexes with the neighbour in index order (adjacent in the sorted list, so gaps are fine). Titles stay.
+       Both old paths are removed first, then both new paths added, so topics with equal titles work. */
+    moveTopic: {
+      label: (a) => `Move topic ${a.dir === "up" ? "up" : "down"}: ${a.file} (${a.folder})`,
+      plan(entries, a, out) {
+        if (a.dir !== "up" && a.dir !== "down") throw fail("invalid", "Unknown direction.");
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        assertNoDuplicates(chapters);
+        const { dir, topics } = topicsIn(entries, a.subject, a.folder);
+        assertNoTopicDuplicates(topics);
+        const i = topics.findIndex((t) => t.file === a.file);
+        if (i === -1) findTopic(topics, a.file); // throws "missing"
+        const mine = topics[i];
+        const other = topics[a.dir === "up" ? i - 1 : i + 1];
+        if (!other) throw fail("invalid", a.dir === "up" ? "This is already the first topic." : "This is already the last topic.");
+        const n = chapter.num;
+        const mineNew = `${n}.${other.idx}${mine.rest}`;
+        const otherNew = `${n}.${mine.idx}${other.rest}`;
+        out.map = { [`${n}.${mine.idx}`]: `${n}.${other.idx}`, [`${n}.${other.idx}`]: `${n}.${mine.idx}` };
+        out.id = `${n}.${other.idx}`;
+        return [removal(mine.entry), removal(other.entry), moved(mine.entry, `${dir}/${mineNew}`), moved(other.entry, `${dir}/${otherNew}`)];
+      },
+    },
+
+    /* Removes the topic and shifts every HIGHER index in the chapter down by one (files renamed), in the same operation.
+       Lower indexes and gaps below stay. An emptied chapter folder gets a .gitkeep so it does not vanish. */
+    deleteTopic: {
+      label: (a) => `Delete topic: ${a.file} (${a.folder})`,
+      plan(entries, a, out) {
+        const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
+        assertNoDuplicates(chapters);
+        const { dir, topics } = topicsIn(entries, a.subject, a.folder);
+        assertNoTopicDuplicates(topics);
+        const mine = findTopic(topics, a.file);
+        const n = chapter.num;
+        const gone = [removal(mine.entry)];
+        const adds = [];
+        const map = {};
+        for (const t of topics.filter((x) => x.idx > mine.idx)) {
+          gone.push(removal(t.entry));
+          adds.push(moved(t.entry, `${dir}/${n}.${t.idx - 1}${t.rest}`));
+          map[`${n}.${t.idx}`] = `${n}.${t.idx - 1}`;
+        }
+        out.removed = `${n}.${mine.idx}`;
+        out.map = map;
+        const changes = keepChapterAlive(entries, a.subject, a.folder, [...gone, ...adds]);
+        return keepSubjectAlive(entries, a.subject, changes);
+      },
+    },
   };
 
   /* ---------- running an operation ----------
@@ -524,7 +674,7 @@
   global.NotesWrite = {
     cleanName, validateName, addSubject, renameSubject, deleteSubject,
     addChapter, renameChapter, changeChapterNumber, deleteChapter, moveChapter,
-    run, duplicateGroups, duplicateMessage,
+    run, duplicateGroups, duplicateMessage, topicDuplicateMessage,
     getWriteRepo, verifyNotesRepo, saveConfig, parseRepoInput,
     setGuard(fn) { guard = fn; },
     /* used by stage.js only */
