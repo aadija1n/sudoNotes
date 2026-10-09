@@ -163,8 +163,10 @@
       wrap.replaceChildren(ta);
       ta.addEventListener("input", () => grow(ta));
       ta.addEventListener("blur", () => commit());
+      ta.addEventListener("paste", (e) => { if (global.NotesSmart) global.NotesSmart.handlePaste(e, ta, ctx); });
       ta.addEventListener("keydown", (e) => {
         if (global.NotesFormat && global.NotesFormat.handleKey(e, ta)) return;
+        if (global.NotesSmart && global.NotesSmart.handleKey(e, ta, ctx)) return;
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitAndNext(); }
       });
@@ -214,6 +216,20 @@
       if (next === addSlot) newBlockEdit();
       else { const b = blkOf(next); if (b) startEdit(b, next, false); }
     }
+
+    /* 9F: what the smart-typing rules need from the block editor */
+    const ctx = {
+      nav(dir) { // ArrowUp at the start / ArrowDown at the end: edit the neighbouring existing block
+        if (!ed || locked) return false;
+        const sib = dir < 0 ? ed.wrap.previousElementSibling : ed.wrap.nextElementSibling;
+        if (!sib || sib === addSlot || !blkOf(sib)) return false;
+        commit();
+        const b = sib.isConnected ? blkOf(sib) : null;
+        if (b) startEdit(b, sib, false, { caret: dir < 0 ? b.body.length : 0 });
+        return true;
+      },
+      newBlockBelow() { if (!ed) return; commit(); api.insertAfterActive("", { edit: true }); },
+    };
 
     function commit() {
       if (!ed) return;

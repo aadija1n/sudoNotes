@@ -155,7 +155,11 @@
       blocks: null, view: "source",
     };
     ta.addEventListener("input", () => { grow(); syncUnload(); });
-    ta.addEventListener("keydown", (e) => { if (global.NotesFormat) global.NotesFormat.handleKey(e, ta); }); // 9E: formatting shortcuts in Source view
+    ta.addEventListener("keydown", (e) => { // 9E formatting shortcuts, then 9F smart typing (no ctx in Source view)
+      if (global.NotesFormat && global.NotesFormat.handleKey(e, ta)) return;
+      if (global.NotesSmart) global.NotesSmart.handleKey(e, ta);
+    });
+    ta.addEventListener("paste", (e) => { if (global.NotesSmart) global.NotesSmart.handlePaste(e, ta); });
     ta.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
