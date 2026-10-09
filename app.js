@@ -1,5 +1,6 @@
 /* Phase 3 / 5R: real data from the notes repository, rendered markdown.
-   Phase 8B: chapter and topic menus are live. Only menu entries without an action (none left) would still show a preview toast. */
+   Phase 8B: chapter and topic menus are live.
+   Phase 10-15: smooth note reading and editing integration. */
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
@@ -31,6 +32,7 @@ const store = {
 
 function toast(message, ms = 2600) {
   const host = document.getElementById("toasts");
+  if (!host) return;
   const el = document.createElement("div");
   el.className = "toast";
   el.textContent = message;
@@ -54,9 +56,6 @@ function flatTopics(s) {
 }
 
 /* ---------- mode (R / W) and the mode dock (Phase 8A) ---------- */
-/* One component: the R / W switch, and (only while changes are pending in write mode) a count chip plus
-   Save / Undo last / Discard. Bottom of the index bar (and its mobile drawer) on a subject page, bottom-left
-   corner on the home page. renderDock() fills in the live parts; the markup itself never changes. */
 function modeSwitch(extra = "") {
   return `<div class="dock ${extra}" data-dock>
     <div class="dock-row">
@@ -85,12 +84,12 @@ function setMode(next) {
   document.querySelectorAll(".mode-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   if (mode === "r") {
     closeMenu();
-    if (NotesEditor.isOpen()) { // the editor needs write mode; the rendered note comes back
+    if (NotesEditor.isOpen()) {
       NotesEditor.close();
       if (subj && document.getElementById("note-scroll")) showTopic(currentTopicId);
     }
-    if (NotesStage.count()) NotesStage.suspend(); // pending changes stay in sessionStorage (descriptors only) and can be restored after login
-    Auth.lock(); // leaving write mode forgets the token
+    if (NotesStage.count()) NotesStage.suspend();
+    Auth.lock();
   }
   renderDock();
   armIdle();
@@ -111,16 +110,16 @@ function openMenu(btn, type) {
   menuEl.className = "menu";
   menuEl.dataset.owner = btn.dataset.uid;
   const chapterEl = btn.closest(".chapter");
-  menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : ""; // which chapter a chapter menu acts on
+  menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : "";
   const topicLink = type === "topic" ? btn.closest("li").querySelector(".topic") : null;
-  menuEl.dataset.file = topicLink ? topicLink.dataset.file || "" : ""; // which topic file a topic menu acts on
+  menuEl.dataset.file = topicLink ? topicLink.dataset.file || "" : "";
   menuEl.setAttribute("role", "menu");
   let items = MENUS[type];
-  if (type === "chapter" && subj) { // the first chapter has no "Move up", the last has no "Move down" (hidden)
+  if (type === "chapter" && subj) {
     const i = subj.chapters.findIndex((c) => c.folder === menuEl.dataset.folder);
     items = items.filter((it) => !(it[3] === "chapter:up" && i === 0) && !(it[3] === "chapter:down" && i === subj.chapters.length - 1));
   }
-  if (type === "topic" && subj) { // the first topic has no "Move up", the last has no "Move down" (hidden)
+  if (type === "topic" && subj) {
     const ch = chapterByFolder(menuEl.dataset.folder);
     const i = ch ? ch.topics.findIndex((t) => topicFile(t) === menuEl.dataset.file) : -1;
     if (i !== -1) items = items.filter((it) => !(it[3] === "topic:up" && i === 0) && !(it[3] === "topic:down" && i === ch.topics.length - 1));
@@ -162,7 +161,6 @@ function showSkeleton(kind) {
   }
 }
 
-/* Screens for the offline (local folder) mode. Returns null for any other error. */
 function localScreen(e) {
   const notice = (title, text, buttons) => `<div class="notice"><h2>${title}</h2><p>${text}</p><div class="row">${buttons}</div></div>`;
   const pick = `<button class="btn" data-local="pick">Choose another folder</button>`;
@@ -230,7 +228,6 @@ function renderError(e) {
     </div>`;
 }
 
-/* Pages site with no notes repository set: nothing is read from anywhere. R / W stay so the admin can log in. */
 function renderNotConfigured() {
   currentSubject = null;
   subj = null;
@@ -325,7 +322,6 @@ function buildSubject(found) {
   const dupHtml = dupGroups.length
     ? `<div class="dup-warning w-only" role="alert"><p><b>Two chapter folders share a number.</b></p>${dupGroups.map((g) => `<p>${g.map((f) => `<b>${esc(f)}</b>`).join(" and ")} use the same chapter number, so they are merged in this list.</p>`).join("")}<p>Rename one of the folders in your notes repository or notes folder. Until then, Move, Delete and Change number are turned off for this subject.</p></div>`
     : "";
-  // Phase 8B: two topic files with one index in a chapter
   const topicDupHtml = found.chapters.filter((c) => c.topicDups && c.topicDups.length).map((c) => `<div class="dup-warning w-only topic-dup" role="alert"><p><b>Two topics in ${chapterLabel(c)} share a number.</b></p>${topicDupGroups(c).map((g) => `<p>${g.map((f) => `<b>${esc(f)}</b>`).join(" and ")} use the same topic number.</p>`).join("")}<p>Rename one of the files in your notes repository or notes folder. Until then, Move up, Move down and Delete are turned off for this chapter (Rename still works).</p></div>`).join("");
 
   app.innerHTML = `
@@ -362,11 +358,10 @@ function setChapterOpen(chapterEl, open) {
 
 function toggleChapter(chapterEl) {
   const willOpen = !chapterEl.classList.contains("open");
-  document.querySelectorAll(".chapter.open").forEach((c) => setChapterOpen(c, false)); // accordion
+  document.querySelectorAll(".chapter.open").forEach((c) => setChapterOpen(c, false));
   if (willOpen) setChapterOpen(chapterEl, true);
 }
 
-/* Drops the note's own first heading when it just repeats the topic title. */
 function dropDuplicateTitle(el, topic) {
   const first = [...el.children].find((c) => !c.classList.contains("toc"));
   if (!first || first.tagName !== "H1") return;
@@ -378,6 +373,7 @@ function dropDuplicateTitle(el, topic) {
 async function showTopic(id) {
   const token = ++noteToken;
   const host = document.getElementById("note-scroll");
+  if (!host) return;
   document.querySelectorAll(".topic.active").forEach((a) => a.classList.remove("active"));
   const list = flatTopics(subj);
   const idx = id ? list.findIndex((t) => t.id === id) : -1;
@@ -438,7 +434,7 @@ async function showTopic(id) {
 
   const body = host.querySelector("#note-body");
   if (NotesEditor.isOpen()) {
-    if (NotesEditor.id() === t.id) { NotesEditor.setPath(t.path); NotesEditor.remount(body); return; } // a dock action redrew the page: the editor stays as it is
+    if (NotesEditor.id() === t.id) { NotesEditor.setPath(t.path); NotesEditor.remount(body); return; }
     NotesEditor.close();
   }
   try {
@@ -447,7 +443,7 @@ async function showTopic(id) {
       text = await NotesData.loadNote(t.path);
       noteCache.set(t.path, text);
     }
-    if (token !== noteToken) return; // user already moved on
+    if (token !== noteToken) return;
     if (!text.trim()) {
       body.innerHTML = `<p class="empty-note">This note is empty.</p>`;
     } else {
@@ -478,7 +474,7 @@ async function route() {
   const token = ++routeToken;
   closeMenu();
   const m = (location.hash || "#/").match(/^#\/subject\/([^/]+)(?:\/(.+))?$/);
-  if (NotesEditor.isOpen() && !(m && decodeURIComponent(m[1]) === currentSubject)) NotesEditor.close(); // any dirty text was confirmed before this point
+  if (NotesEditor.isOpen() && !(m && decodeURIComponent(m[1]) === currentSubject)) NotesEditor.close();
 
   if (!DATA) {
     showSkeleton(m ? "subject" : "home");
@@ -513,19 +509,18 @@ const IDLE_MS = 30 * 60 * 1000;
 let idleTimer = null;
 let modalReturnFocus = null;
 
-/* Writing mode locks itself after 30 minutes without clicks or keys. */
 function armIdle() {
   clearTimeout(idleTimer);
   if (mode !== "w") return;
   idleTimer = setTimeout(() => {
     const had = NotesStage.count();
-    if (had && !NotesStage.canSuspend()) { // cannot keep the changes anywhere: stay unlocked rather than lose them
+    if (had && !NotesStage.canSuspend()) {
       armIdle();
       toast("Still unlocked because you have unsaved changes. Save or discard them to lock.", 6000);
       return;
     }
     setMode("r");
-    if (had) reloadView(); // the screen goes back to the saved notes
+    if (had) reloadView();
     toast(had ? "Locked after 30 minutes. Your unsaved changes were kept: log in again to restore them." : "Locked after 30 minutes of inactivity", 5000);
   }, IDLE_MS);
 }
@@ -571,7 +566,6 @@ async function requestWrite(btn) {
   } catch (e) {
     const notSetup = e.code === "not-setup";
     if (notSetup && NotesData.source() === "local") {
-      // working on your own computer with no auth.json in the folder: nothing to log in against
       setMode("w");
       toast("No admin login found in this folder, so writing mode is unlocked.", 4000);
       return;
@@ -632,7 +626,7 @@ function showLogin(record) {
     e.preventDefault();
     err.textContent = "";
     setBusy(true);
-    await new Promise((r) => setTimeout(r, 30)); // let "Checking…" paint before the heavy key derivation
+    await new Promise((r) => setTimeout(r, 30));
     try {
       const token = await Auth.unlock(record, user.value, pass.value);
       closeModal();
@@ -646,18 +640,16 @@ function showLogin(record) {
         : ex.code === "no-crypto" ? ex.message
         : "The admin file looks damaged. Generate it again with setup.html.";
       form.classList.remove("shake");
-      void form.offsetWidth; // restart the shake animation
+      void form.offsetWidth;
       form.classList.add("shake");
       pass.value = "";
-      if (wrong && ++fails >= 3) await new Promise((r) => setTimeout(r, (fails - 2) * 1000)); // slow down guessing
+      if (wrong && ++fails >= 3) await new Promise((r) => setTimeout(r, (fails - 2) * 1000));
       setBusy(false);
       pass.focus();
     }
   });
 }
 
-/* Right after login: with no notes repository the admin is taken to the setup form,
-   otherwise this is advisory only (warns early if the token cannot write to the notes repo). */
 async function checkTokenAccess(token) {
   const repo = NotesData.notesRepo();
   if (!repo) {
@@ -719,7 +711,6 @@ function openNotesRepoForm() {
       return;
     }
 
-    // From now on this page session reads and writes the new notes repository (config.js is not deployed yet).
     NotesData.setNotesRepo(verified.repo);
     noteCache.clear();
     DATA = null;
@@ -787,10 +778,7 @@ function showRepoResult(wrap, verified, outcome) {
   });
 }
 
-/* ---------- writing: dialogs and subject actions (Phase 5) ---------- */
-
-/* One reusable dialog: optional text input with live validation, a confirm button that
-   shows "Saving…" while onSubmit runs, and the error (if any) shown inline. */
+/* ---------- writing: dialogs and subject actions ---------- */
 function dialog({ title, sub, input, confirm, danger, onSubmit }) {
   const wrap = openModal(`
     <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
@@ -813,7 +801,7 @@ function dialog({ title, sub, input, confirm, danger, onSubmit }) {
   let busy = false;
 
   const check = () => {
-    const msg = input.validate(field.value); // "" ok, " " = silently not ready, otherwise a message
+    const msg = input.validate(field.value);
     err.textContent = msg.trim();
     submit.disabled = !!msg;
   };
@@ -845,11 +833,10 @@ function dialog({ title, sub, input, confirm, danger, onSubmit }) {
     field.select();
     check();
   } else {
-    cancel.focus(); // for confirmations the safe choice has focus
+    cancel.focus();
   }
 }
 
-/* Offline mode buttons (choose / reconnect / create). Must run straight from the click. */
 async function localAction(kind) {
   try {
     if (kind === "pick") await NotesLocal.pickFolder();
@@ -882,13 +869,12 @@ function nameValidator(taken, current) {
 
 const otherSubjects = (except) => DATA.subjects.map((s) => s.name).filter((n) => n !== except).map((n) => n.toLowerCase());
 
-/* After a save: show the new state immediately (no waiting for GitHub Pages). */
 async function applySave(result) {
   noteCache.clear();
   try {
     DATA = await NotesData.refresh(result);
   } catch {
-    DATA = null; // could not re-read now, so the next route() loads fresh data
+    DATA = null;
     NotesData.resetData();
   }
 }
@@ -951,7 +937,7 @@ function deleteSubjectDialog() {
   });
 }
 
-/* ---------- chapters (Phase 6, Phase 7) ---------- */
+/* ---------- chapters ---------- */
 const chapterByFolder = (folder) => (subj ? subj.chapters.find((c) => c.folder === folder) : null);
 const chapterLabel = (ch) => `Chapter ${pad(ch.num)} - ${esc(ch.name)}`;
 const topicChapterNum = (id) => (id ? parseInt(String(id).split(".")[0], 10) : NaN);
@@ -961,23 +947,21 @@ function openChapterNum() {
   return el ? parseInt(el.dataset.ch, 10) : null;
 }
 
-/* Chapter numbers change in move / change number / delete. `map` is {oldNumber: newNumber}; topic ids start with the chapter number. */
 const remapId = (id, map) => {
   if (!id || !map) return id;
-  if (Object.prototype.hasOwnProperty.call(map, String(id))) return map[String(id)]; // a topic id map: {"2.1": "2.2"}
+  if (Object.prototype.hasOwnProperty.call(map, String(id))) return map[String(id)];
   const parts = String(id).split(".");
   const n = map[parseInt(parts[0], 10)];
   return n === undefined ? id : `${n}.${parts.slice(1).join(".")}`;
 };
 const remapNum = (n, map) => (n != null && map && map[n] !== undefined ? map[n] : n);
-const invertMap = (map) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [v, /^\d+$/.test(k) ? Number(k) : k])); // chapter maps are numbers, topic maps are ids
+const invertMap = (map) => Object.fromEntries(Object.entries(map || {}).map(([k, v]) => [v, /^\d+$/.test(k) ? Number(k) : k]));
 function remapLastTopic(subjectName, map) {
   const last = store.get(lastTopicKey(subjectName));
   const next = remapId(last, map);
   if (last && next !== last) store.set(lastTopicKey(subjectName), next);
 }
 
-/* Two chapter folders with one number (write mode warning, and these operations are refused). */
 const duplicateGroups = () => (subj ? subj.chapters.filter((c) => c.dups && c.dups.length).map((c) => [c.folder, ...c.dups]) : []);
 function blockedByDuplicates() {
   const groups = duplicateGroups();
@@ -999,8 +983,6 @@ function numberValidator(usedByOthers, current) {
   };
 }
 
-/* Rebuilds the subject page from the fresh data without a reload: sets the address to `topicId`,
-   keeps the mobile drawer and the index scroll position, and opens chapter `openNum` (one at a time). */
 async function showSubjectAfterSave({ topicId, openNum }) {
   const name = subj.name;
   try {
@@ -1026,7 +1008,7 @@ async function showSubjectAfterSave({ topicId, openNum }) {
     const opened = document.querySelector(".chapter.open");
     if (opened && openNum != null) opened.scrollIntoView({ block: "nearest" });
   } catch {
-    currentSubject = null; // the change worked; just load everything again
+    currentSubject = null;
     route();
   }
 }
@@ -1060,7 +1042,7 @@ function renameChapterDialog(folder) {
       const openNum = openChapterNum();
       await applyOp(await NotesWrite.run("renameChapter", { subject: subjectName, folder, name }));
       toast("Chapter renamed");
-      await showSubjectAfterSave({ topicId: currentTopicId, openNum }); // topic ids do not change, so the open note stays open
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum });
     },
   });
 }
@@ -1082,8 +1064,6 @@ function changeChapterNumberDialog(folder) {
       const openNum = openChapterNum();
       const result = await NotesWrite.run("changeChapterNumber", { subject: subjectName, folder, newNum });
       await applyOp(result);
-
-      // topic ids and addresses start with the chapter number, so follow the open topic and the remembered one
       const map = result.map || { [oldNum]: newNum };
       remapLastTopic(subjectName, map);
       toast("Chapter number changed");
@@ -1139,7 +1119,7 @@ async function moveChapterAction(folder, dir) {
   await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum: remapNum(openNum, map) });
 }
 
-/* ---------- topics (Phase 8B) ---------- */
+/* ---------- topics ---------- */
 function blockedByTopicDuplicates(ch) {
   const groups = topicDupGroups(ch);
   if (!groups.length) return false;
@@ -1147,7 +1127,6 @@ function blockedByTopicDuplicates(ch) {
   return true;
 }
 
-/* The chapter and topic a topic menu acted on, from the current data (null + a toast when they are gone). */
 function topicTarget(folder, file) {
   const ch = chapterByFolder(folder);
   const t = ch ? ch.topics.find((x) => topicFile(x) === file) : null;
@@ -1188,7 +1167,7 @@ function renameTopicDialog(folder, file) {
       const openNum = openChapterNum();
       await applyOp(await NotesWrite.run("renameTopic", { subject: subjectName, folder, file, title }));
       toast("Topic renamed");
-      await showSubjectAfterSave({ topicId: currentTopicId, openNum }); // the topic id does not change
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum });
     },
   });
 }
@@ -1256,21 +1235,19 @@ const ACTIONS = {
   "chapter:delete": deleteChapterDialog,
 };
 
-/* ---------- staged changes UI (Phase 7, GitHub mode) ---------- */
+/* ---------- staged changes UI (GitHub mode) ---------- */
 let sbError = "";
 let unloadOn = false;
 
-/* After a change is staged (nothing is committed yet): redraw from the virtual tree. */
 async function applyOp(result) {
   if (result && result.staged) {
     noteCache.clear();
-    DATA = await NotesData.loadData(); // the virtual tree: base + pending changes
+    DATA = await NotesData.loadData();
   } else {
-    await applySave(result); // local mode: already written to the folder
+    await applySave(result);
   }
 }
 
-/* Brings the screen to the current data without losing the place (subject page) or re-renders the page. */
 async function redraw() {
   if (subj && document.getElementById("index")) await showSubjectAfterSave({ topicId: currentTopicId, openNum: openChapterNum() });
   else route();
@@ -1284,7 +1261,6 @@ function reloadView() {
   route();
 }
 
-/* Updates every dock on the page (and the mobile top-bar indicator) from the staging state. */
 function renderDock() {
   const n = NotesStage.count();
   const show = mode === "w" && n > 0;
@@ -1295,7 +1271,7 @@ function renderDock() {
   document.querySelectorAll(".dock").forEach((dk) => {
     dk.classList.toggle("has-pending", show);
     dk.classList.toggle("saving", saving);
-    dk.querySelector(".dock-pending").toggleAttribute("inert", !show); // hidden rows cannot be tabbed to
+    dk.querySelector(".dock-pending").toggleAttribute("inert", !show);
     const chip = dk.querySelector(".dock-chip");
     chip.hidden = !show;
     chip.textContent = show ? text : "";
@@ -1313,7 +1289,6 @@ function renderDock() {
   }
 }
 
-/* The browser's own "Leave site?" prompt, registered only while changes are pending. */
 function onBeforeUnload(e) {
   e.preventDefault();
   e.returnValue = "";
@@ -1325,7 +1300,6 @@ function syncBeforeUnload() {
   else if (!want && unloadOn) { window.removeEventListener("beforeunload", onBeforeUnload); unloadOn = false; }
 }
 
-/* Save. Returns true when the pending list is gone (saved), false when it is kept (error shown). */
 async function doSave() {
   if (NotesStage.isSaving()) return false;
   if (!NotesStage.count()) return true;
@@ -1334,7 +1308,7 @@ async function doSave() {
     const r = await NotesStage.save();
     sbError = "";
     if (r.treeSha) {
-      await applySave(r); // read the new committed tree
+      await applySave(r);
     } else {
       noteCache.clear();
       NotesData.resetData();
@@ -1370,7 +1344,6 @@ function showReplayFailure(failures) {
   });
 }
 
-/* After Undo or Discard: put the open page back where it belongs. `entries` = the removed operations, last one first. */
 async function settleAfterUndo(entries) {
   if (!subj || !document.getElementById("index")) { route(); return; }
   let name = subj.name;
@@ -1378,7 +1351,7 @@ async function settleAfterUndo(entries) {
   let openNum = openChapterNum();
   for (const e of entries) {
     if (e.type === "renameSubject" && NotesWrite.cleanName(e.args.name) === name) { name = e.args.oldName; continue; }
-    if (e.type === "addTopic" && e.out && e.args.subject === name) { // the new topic is gone again
+    if (e.type === "addTopic" && e.out && e.args.subject === name) {
       if (topic === e.out.id) topic = null;
       if (store.get(lastTopicKey(name)) === e.out.id) { try { localStorage.removeItem(lastTopicKey(name)); } catch { /* storage unavailable */ } }
       continue;
@@ -1398,7 +1371,7 @@ async function settleAfterUndo(entries) {
 
 async function reloadDataAfterRemoval() {
   noteCache.clear();
-  if (!NotesStage.count()) NotesData.resetData(); // nothing pending any more: read the repository again
+  if (!NotesStage.count()) NotesData.resetData();
   DATA = await NotesData.loadData();
 }
 
@@ -1438,8 +1411,6 @@ function discardDialog() {
   });
 }
 
-/* In-app exits that would drop the pending list (back to R, changing the notes repository):
-   our own Save / Discard / Cancel dialog. (Closing the tab can only get the browser's own prompt.) */
 function confirmLeave(what, proceed) {
   const n = NotesStage.count();
   if (!n || mode !== "w") { proceed(); return; }
@@ -1474,9 +1445,7 @@ function confirmLeave(what, proceed) {
   wrap.querySelector('[data-lv="cancel"]').focus();
 }
 
-/* ---------- Phase 9A: editing a note as Markdown ---------- */
-
-/* Asks before unsaved editor text is thrown away. Same dialog pattern as confirmLeave. */
+/* ---------- note editing ---------- */
 function confirmDiscardEdits(proceed) {
   modalReturnFocus = document.activeElement;
   const wrap = openModal(`
@@ -1493,13 +1462,11 @@ function confirmDiscardEdits(proceed) {
   wrap.querySelector("[data-ed-keep]").focus();
 }
 
-/* Runs proceed() at once unless the editor holds unsaved text. */
 function guardEditor(proceed) {
   if (NotesEditor.isDirty()) confirmDiscardEdits(proceed);
   else proceed();
 }
 
-/* Stages the edit. A repeated edit of the same note replaces the previous staged edit instead of piling up. */
 async function saveNoteEdit(path, content) {
   const list = NotesStage.entries();
   const last = list[list.length - 1];
@@ -1508,7 +1475,7 @@ async function saveNoteEdit(path, content) {
   try {
     await applyOp(await NotesWrite.run("editNote", { path, content }));
   } catch (e) {
-    if (replaced) { try { await NotesWrite.run("editNote", replaced.args); } catch { /* keep the original error */ } } // put the earlier edit back
+    if (replaced) { try { await NotesWrite.run("editNote", replaced.args); } catch { /* keep the original error */ } }
     throw e;
   }
 }
@@ -1528,14 +1495,13 @@ async function startNoteEdit() {
       text,
       confirmDiscard: confirmDiscardEdits,
       onDone: (content) => saveNoteEdit(NotesEditor.path(), content),
-      onClosed: () => { if (subj && document.getElementById("note-scroll")) showTopic(currentTopicId); }, // the rendered note comes back from the newest text
+      onClosed: () => { if (subj && document.getElementById("note-scroll")) showTopic(currentTopicId); },
     });
   } catch (err) {
     toast(err.message || "Could not open the note for editing.");
   }
 }
 
-/* Navigation while editing: put the address back, ask, and only then go on. */
 function onHashChange() {
   if (NotesEditor.isDirty() && subj) {
     const here = `#/subject/${encodeURIComponent(subj.name)}/${currentTopicId}`;
@@ -1553,7 +1519,6 @@ function onHashChange() {
   route();
 }
 
-/* After login: changes kept in sessionStorage (refresh, or automatic lock) can be restored. */
 function offerRestore() {
   if (NotesData.source() !== "github" || !NotesData.notesRepo() || NotesStage.count()) return;
   const n = NotesStage.savedCount();
@@ -1602,11 +1567,11 @@ document.addEventListener("click", (e) => {
   const menuItem = t.closest(".menu button");
   if (menuItem) {
     const action = ACTIONS[menuItem.dataset.action];
-    const folder = menuEl ? menuEl.dataset.folder || "" : ""; // read before the menu is removed
+    const folder = menuEl ? menuEl.dataset.folder || "" : "";
     const file = menuEl ? menuEl.dataset.file || "" : "";
     closeMenu();
     if (action) action(folder, file);
-    else toast(`"${menuItem.dataset.label}" arrives in Phase ${menuItem.dataset.phase}`);
+    else toast(`"${menuItem.dataset.label}" arrives soon`);
     return;
   }
 
@@ -1614,7 +1579,6 @@ document.addEventListener("click", (e) => {
   if (dots) { e.stopPropagation(); openMenu(dots, dots.dataset.menu); return; }
   closeMenu();
 
-  /* in-page links (table of contents, footnotes) scroll instead of changing the route */
   const anchor = t.closest('a[href^="#"]');
   if (anchor && !anchor.getAttribute("href").startsWith("#/")) {
     e.preventDefault();
@@ -1662,7 +1626,6 @@ document.addEventListener("click", (e) => {
   if (t.closest("#open-index, #mb-pending")) { setDrawer(true); return; }
   if (t.closest("#backdrop")) { setDrawer(false); return; }
   if (t.closest("#add-subject")) { addSubjectDialog(); return; }
-  if (t.closest("#add-content")) { toast("The insert menu arrives in Phase 9"); return; }
 });
 
 document.addEventListener("keydown", (e) => {
@@ -1670,7 +1633,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 NotesData.setTokenProvider(() => Auth.getToken());
-NotesWrite.setGuard(() => mode === "w"); // saving is only possible while writing mode is unlocked
+NotesWrite.setGuard(() => mode === "w");
 NotesStage.onChange(() => { renderDock(); syncBeforeUnload(); });
 if (NotesData.source() === "local") Auth.setRecordLoader(() => NotesLocal.readRootFile("auth.json"));
 window.addEventListener("hashchange", onHashChange);

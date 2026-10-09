@@ -4,7 +4,8 @@
    that block's body (its trailing blank-line gap is kept). Pure UI: the host (editor.js) owns staging and guards.
    NotesBlocks.mount(container, { text, dir, onChange(text) }) -> { getText, setText, commit, setLocked, destroy,
      insertAfterActive(text, { edit, caret }), activeIndex() } | null
-   Phase 9C: the handle can insert a new block after the block last edited or focused (insertmenu.js drives it). */
+   Phase 9C: the handle can insert a new block after the block last edited or focused (insertmenu.js drives it).
+   Phase 10C: blur guard with [data-keep-edit] so popovers (symbol palette, formula editor) don't force a commit. */
 
 (function (global) {
   /* Returns { lead, blocks: [{ body, gap }] } or null when the split is not byte-exact. */
@@ -68,6 +69,7 @@
   const EMPTY_TEMPLATE = [
     /^#{1,6}$/, /^(?:[-*+](?: \[[ xX]\])?|\d+[.)]|>)$/,
     /^(`{3,}|~{3,})[^\n`]*\n(?:[ \t]*\n)*[ \t]*\1$/, /^<div>\s*<\/div>$/i,
+    /^\$\$\s*\$\$$/, // 10C1: empty math block $$ $$ dropped if unchanged
   ];
   const isEmptyTemplate = (t) => EMPTY_TEMPLATE.some((re) => re.test(t));
 
@@ -97,7 +99,7 @@
 
     /* Part 1 fix: a block must never look empty. ">>" is an empty nested quote and unknown HTML is stripped by the
        sanitizer, so the render can come out with nothing visible; then the raw source is shown instead. */
-    const VISIBLE = "img, hr, svg, table, input, video, audio, iframe, canvas, picture, object, embed, .mermaid-box";
+    const VISIBLE = "img, hr, svg, table, input, video, audio, iframe, canvas, picture, object, embed, .mermaid-box, .math";
     function rawView(body, hint) {
       const box = document.createElement("div");
       box.className = "blk-rawbox";
@@ -162,8 +164,15 @@
       wrap.removeAttribute("title");
       wrap.replaceChildren(ta);
       if (global.NotesSlash) global.NotesSlash.attach(ta, { commit, insert: global.NotesInsert }); // 9G: before the other listeners
+      if (global.NotesMathInput) global.NotesMathInput.attach(ta); // 10C: math input shortcuts & conversions
       ta.addEventListener("input", () => grow(ta));
-      ta.addEventListener("blur", () => commit());
+      ta.addEventListener("blur", (e) => {
+        // Blur guard: if focus moved to a popover or tool with [data-keep-edit], do not commit!
+        if (e && e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-keep-edit]")) {
+          return;
+        }
+        commit();
+      });
       ta.addEventListener("paste", (e) => { if (global.NotesSmart) global.NotesSmart.handlePaste(e, ta, ctx); });
       ta.addEventListener("keydown", (e) => {
         if (global.NotesFormat && global.NotesFormat.handleKey(e, ta)) return;
@@ -330,7 +339,7 @@
     /* 9D: Alt+Up / Alt+Down move the block being edited or focused */
     root.addEventListener("keydown", (e) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || locked) return;
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      if (e.key === "ArrowUp" && e.key !== "ArrowDown") return;
       const w = e.target.closest && e.target.closest(".blk");
       if (!w) return;
       e.preventDefault();
@@ -362,8 +371,8 @@
       commit,
       count() { return blocks.length; },
       blockIndex(wrap) { commit(); return blocks.findIndex((b) => b.wrap === wrap); },
-      /* swaps the two bodies; the whitespace after each position (incl. the file ending) stays where it is.
-         A gap without a blank line is widened so a moved paragraph cannot merge into its neighbour. */
+      getActiveTextarea() { return ed ? ed.ta : null; },
+      getActiveBlock() { return active; },
       moveBlock(i, dir) {
         if (locked) return false;
         commit();
@@ -388,7 +397,7 @@
         if (!inRange(i)) return false;
         const src = blocks[i];
         const copy = { body: src.body, gap: "\n\n", wrap: null };
-        if (i === blocks.length - 1) { copy.gap = src.gap; src.gap = "\n\n"; } // the file ending moves to the new last block
+        if (i === blocks.length - 1) { copy.gap = src.gap; src.gap = "\n\n"; }
         placeBlock(copy, i + 1);
         const wrap = makeWrap(copy);
         root.insertBefore(wrap, src.wrap.nextSibling);
@@ -397,7 +406,6 @@
         if (wrap.scrollIntoView) wrap.scrollIntoView({ block: "nearest" });
         return true;
       },
-      /* removes the block like an emptied one; returns a record for restoreBlock, or null */
       deleteBlock(i) {
         if (locked) return null;
         commit();
@@ -412,7 +420,6 @@
         changed();
         return rec;
       },
-      /* puts a deleted block back at its old position with its exact text and gap */
       restoreBlock(rec) {
         if (locked || !rec) return false;
         commit();
@@ -428,10 +435,7 @@
         if (wrap.scrollIntoView) wrap.scrollIntoView({ block: "nearest" });
         return true;
       },
-      commit,
       activeIndex() { return active ? blocks.indexOf(active) : -1; },
-      /* 9C: inserts `text` as a new block after the active block (or at the end). edit:false adds it finished;
-         otherwise it opens in the block editor with the caret at `caret` (default: the end). */
       insertAfterActive(text, o) {
         o = o || {};
         if (locked) return false;
@@ -452,7 +456,6 @@
         return true;
       },
       setLocked(on) { locked = !!on; root.classList.toggle("locked", locked); },
-      /* replaces the whole text; false (nothing changed) if it cannot be split byte-exactly */
       setText(text) {
         const p = split(text);
         if (!p) return false;

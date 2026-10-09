@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0e0e11" />
-  <title>Notes</title>
+  <title>Academic Notes</title>
+  <meta name="description" content="Static GitHub-hosted academic notes app with live block editing, KaTeX math authoring, tables, diagrams, and atomic commits." />
+  <meta property="og:title" content="Academic Notes" />
+  <meta property="og:description" content="Static GitHub-hosted academic notes app with live block editing, KaTeX math authoring, tables, diagrams, and atomic commits." />
   <link rel="stylesheet" href="fonts.css" />
   <link rel="stylesheet" href="lib/github-dark.min.css" />
   <link rel="stylesheet" href="style.css" />
@@ -22,6 +25,7 @@
   <link rel="stylesheet" href="seltoolbar.css" />
   <link rel="stylesheet" href="lib/katex/katex.min.css" />
   <link rel="stylesheet" href="math.css" />
+  <link rel="stylesheet" href="mathinput.css" />
 </head>
 <body>
   <main id="app" aria-live="polite"></main>
@@ -37,6 +41,8 @@
   <script defer src="config.js"></script>
   <script defer src="data.js"></script>
   <script defer src="math.js"></script>
+  <script defer src="mathdata.js"></script>
+  <script defer src="mathinput.js"></script>
   <script defer src="render.js"></script>
   <script defer src="auth.js"></script>
   <script defer src="local.js"></script>
@@ -46,6 +52,11 @@
   <script defer src="smarttype.js"></script>
   <script defer src="blocks.js"></script>
   <script defer src="insertmenu.js"></script>
+  <script defer src="tabletools.js"></script>
+  <script defer src="imagetools.js"></script>
+  <script defer src="mermaid_footnotes.js"></script>
+  <script defer src="qablock.js"></script>
+  <script defer src="search_polish.js"></script>
   <script defer src="slashmenu.js"></script>
   <script defer src="shortcuts.js"></script>
   <script defer src="seltoolbar.js"></script>

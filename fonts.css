@@ -1,15 +1,15 @@
-/* Fonts bundled with the project so the app looks the same offline. */
+/* Fonts bundled with the project or system fallbacks so the app looks the same offline. */
 @font-face {
   font-family: "Inter";
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: url("lib/fonts/inter-latin-wght-normal.woff2") format("woff2");
+  src: url("lib/fonts/inter-latin-wght-normal.woff2") format("woff2"), local("Inter"), local("Segoe UI"), local("Roboto"), local("Helvetica Neue");
 }
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
   font-weight: 100 800;
   font-display: swap;
-  src: url("lib/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  src: url("lib/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2"), local("JetBrains Mono"), local("Consolas"), local("Menlo");
 }

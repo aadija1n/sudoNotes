@@ -290,6 +290,8 @@
     register,
     run: runItem,
     put,
+    openDialog,
+    closeDialog,
     attach(getter) {
       getHandle = getter;
       body.classList.add("ed-open");

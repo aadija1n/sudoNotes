@@ -590,5 +590,5 @@
     return true;
   }
 
-  global.NotesFormat = { apply, handleKey, SHORTCUTS, isActive, setColor, setAlign, canAlign, clearFormat };
+  global.NotesFormat = { apply, handleKey, SHORTCUTS, isActive, setColor, setAlign, canAlign, clearFormat, replace };
 })(window);

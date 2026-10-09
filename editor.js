@@ -161,10 +161,11 @@
     });
     ta.addEventListener("paste", (e) => { if (global.NotesSmart) global.NotesSmart.handlePaste(e, ta); });
     ta.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation(); // the app's global Escape handler must not close the confirm dialog we are about to open
-      cancel();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation(); // the app's global Escape handler must not close the confirm dialog we are about to open
+        cancel();
+      }
     });
     s.done.addEventListener("click", done);
     s.cancel.addEventListener("click", cancel);
@@ -190,5 +191,7 @@
     remount(container) { if (s) { mount(container); syncInsert(); } },
     /* drops the editor without asking and without callbacks (the caller decided already) */
     close() { teardown(); },
+    getBlocks() { return s ? s.blocks : null; },
+    getView() { return s ? s.view : null; },
   };
 })(window);

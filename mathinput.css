@@ -1,0 +1,233 @@
+/* Phase 10C: Math input styling (suggestions popover, symbol palette, formula editor) */
+
+/* ---------- Inline backslash suggestions dropdown ---------- */
+.math-suggest {
+  position: fixed;
+  z-index: 70;
+  width: min(240px, calc(100vw - 16px));
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  background: var(--surface, #17171d);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.28));
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  animation: toast-in 0.12s var(--ease, ease);
+}
+.math-suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text, #ececf1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.math-suggest-item:hover,
+.math-suggest-item.active {
+  background: rgba(138, 180, 255, 0.16);
+  color: var(--accent, #8ab4ff);
+}
+.math-suggest-preview {
+  font-size: 14px;
+  min-width: 24px;
+  text-align: right;
+  opacity: 0.9;
+}
+
+/* ---------- Symbol Palette modal / popover ---------- */
+.math-palette {
+  position: fixed;
+  z-index: 65;
+  width: min(520px, calc(100vw - 20px));
+  max-height: min(580px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #17171d);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.28));
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
+  animation: toast-in 0.18s var(--ease, ease);
+  color: var(--text, #ececf1);
+  overflow: hidden;
+}
+
+.math-palette-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+}
+
+.math-palette-search {
+  flex: 1;
+  padding: 7px 12px;
+  background: #0a0a0d;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  color: var(--text, #ececf1);
+  font: inherit;
+  font-size: 13.5px;
+}
+.math-palette-search:focus {
+  outline: none;
+  border-color: var(--accent, #8ab4ff);
+}
+
+.math-palette-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #9b9ba6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.math-palette-close:hover {
+  background: var(--surface-hover, #1c1c23);
+  color: var(--text, #ececf1);
+}
+
+.math-palette-chips {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  scrollbar-width: none;
+}
+.math-palette-chips::-webkit-scrollbar { display: none; }
+
+.math-chip {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, #9b9ba6);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s var(--ease, ease);
+}
+.math-chip:hover {
+  border-color: var(--border-strong, rgba(255, 255, 255, 0.28));
+  color: var(--text, #ececf1);
+}
+.math-chip.active {
+  background: rgba(138, 180, 255, 0.15);
+  border-color: var(--accent, #8ab4ff);
+  color: var(--accent, #8ab4ff);
+  font-weight: 600;
+}
+
+.math-palette-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  overscroll-behavior: contain;
+}
+
+.math-sec-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #9b9ba6);
+}
+.math-sec-title:first-child { margin-top: 0; }
+
+.math-symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.math-sym-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: #0a0a0d;
+  color: var(--text, #ececf1);
+  font-size: 15px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.12s var(--ease, ease);
+}
+.math-sym-btn:hover {
+  background: var(--surface-hover, #1c1c23);
+  border-color: var(--accent, #8ab4ff);
+  transform: translateY(-1px);
+}
+.math-sym-btn .star-btn {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  font-size: 9px;
+  opacity: 0;
+  background: transparent;
+  border: 0;
+  color: #ffd166;
+  cursor: pointer;
+}
+.math-sym-btn:hover .star-btn,
+.math-sym-btn.is-fav .star-btn {
+  opacity: 1;
+}
+
+/* ---------- Formula Editor Popover (Phase 10E) ---------- */
+.formula-editor-modal {
+  width: min(580px, calc(100vw - 24px));
+  padding: 20px;
+  background: var(--surface, #17171d);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.28));
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.formula-editor-preview {
+  min-height: 54px;
+  padding: 12px 16px;
+  background: #0a0a0d;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  overflow-x: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.formula-editor-ta {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 12px;
+  background: #0a0a0d;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  color: var(--text, #ececf1);
+  font-family: var(--font-mono, monospace);
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.formula-editor-ta:focus {
+  outline: none;
+  border-color: var(--accent, #8ab4ff);
+}

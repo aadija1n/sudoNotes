@@ -253,7 +253,9 @@
     if (composing || dragging) return null;
     if (dismissed && dismissed.ta === ta && dismissed.s === ta.selectionStart && dismissed.e === ta.selectionEnd) return null;
     if (visible(doc.querySelector(".slash-menu"))) return null;
-    for (const id of ["modal", "ins-modal", "ks-modal"]) if (visible(doc.getElementById(id))) return null;
+    for (const id of ["modal", "ins-modal", "ks-modal", "math-popover", "table-modal", "img-modal", "fn-modal", "qa-modal"]) {
+      if (visible(doc.getElementById(id))) return null;
+    }
     return ta;
   }
 

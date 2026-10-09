@@ -222,5 +222,5 @@
     return box;
   }
 
-  global.NotesMath = { render, fence, register };
+  global.NotesMath = { render, fence, register, ready: () => loadKatex().then(() => true).catch(() => false) };
 })(window);
