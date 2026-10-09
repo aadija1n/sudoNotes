@@ -109,6 +109,11 @@
       const pre = code.parentElement;
       const lang = ((code.className.match(/language-([\w+-]+)/) || [])[1] || "").toLowerCase();
 
+      if (lang === "math" && global.NotesMath) { // 10B: ```math becomes a display-math placeholder (no copy button)
+        global.NotesMath.fence(pre, code);
+        return;
+      }
+
       if (lang === "mermaid") {
         const box = document.createElement("div");
         box.className = "mermaid-box";
@@ -161,6 +166,7 @@
     });
 
     enhanceCode(el);
+    if (global.NotesMath) global.NotesMath.render(el); // 10B: after the sanitizer, ids and TOC (they use the raw TeX text)
     return el;
   }
 

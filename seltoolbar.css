@@ -1,0 +1,199 @@
+/* Phase 10: floating selection toolbar. Dark surface, thin low-opacity border and shadow, like the app's .menu. */
+
+.seltb,
+.seltb-pop {
+  --stb-bg: var(--surface, #17171c);
+  --stb-border: var(--border, rgba(255, 255, 255, 0.12));
+  --stb-text: var(--text, #e8e8ee);
+  --stb-muted: var(--text-muted, #9a9aa8);
+  --stb-accent: var(--accent, #7c9cff);
+  --stb-radius: var(--radius, 8px);
+  --stb-ease: var(--ease, cubic-bezier(0.2, 0.7, 0.2, 1));
+  box-sizing: border-box;
+  color: var(--stb-text);
+  font: 13px/1.2 inherit;
+  font-family: inherit;
+}
+
+/* ---------- the bar ---------- */
+.seltb {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  max-width: calc(100vw - 16px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  background: var(--stb-bg);
+  border: 1px solid var(--stb-border);
+  border-radius: calc(var(--stb-radius) + 2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.12s var(--stb-ease), transform 0.12s var(--stb-ease), visibility 0s linear 0.12s;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.seltb::-webkit-scrollbar { display: none; }
+.seltb.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+.seltb.is-offscreen { opacity: 0; pointer-events: none; }
+
+.seltb-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--stb-border);
+}
+
+.seltb-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--stb-radius);
+  background: transparent;
+  color: var(--stb-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s var(--stb-ease), color 0.12s var(--stb-ease);
+}
+.seltb-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.seltb-btn:active { background: rgba(255, 255, 255, 0.14); }
+.seltb-btn[aria-pressed="true"],
+.seltb-btn[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--stb-accent) 24%, transparent);
+  color: var(--stb-accent);
+}
+.seltb-btn.is-disabled,
+.seltb-btn[aria-disabled="true"] { opacity: 0.38; cursor: not-allowed; background: transparent; }
+.seltb-btn svg { display: block; }
+.seltb-wide { padding: 0 5px; }
+.seltb-caret { font-size: 9px; opacity: 0.6; margin-left: 1px; }
+.seltb-aa { font-weight: 600; font-size: 13px; }
+.seltb-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 600; }
+.seltb-dots { font-size: 16px; letter-spacing: 1px; line-height: 1; }
+.seltb-A { font-weight: 700; font-size: 15px; }
+
+/* the last-used colour, as a small bar under the icon */
+.seltb-ind {
+  position: absolute;
+  left: 7px;
+  right: 17px;
+  bottom: 4px;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.seltb-ind.set { box-shadow: none; }
+
+/* ---------- popovers ---------- */
+.seltb-pop {
+  position: fixed;
+  z-index: 61;
+  background: var(--stb-bg);
+  border: 1px solid var(--stb-border);
+  border-radius: calc(var(--stb-radius) + 2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  animation: seltb-pop 0.12s var(--stb-ease);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.seltb-menu { min-width: 180px; padding: 4px; }
+.seltb-colors { padding: 8px; width: 188px; }
+
+.seltb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--stb-radius);
+  background: transparent;
+  color: var(--stb-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.seltb-item:hover { background: rgba(255, 255, 255, 0.08); }
+.seltb-item.on { color: var(--stb-accent); }
+.seltb-item-ic { flex: none; display: inline-flex; width: 16px; justify-content: center; font-size: 12px; }
+.seltb-item-lb { flex: 1; }
+.seltb-item-hint { flex: none; margin-left: 12px; font-size: 11px; color: var(--stb-muted); }
+
+.seltb-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.seltb-sw {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.1s var(--stb-ease);
+}
+.seltb-sw:hover { transform: scale(1.12); }
+.seltb-sw.on { border-color: var(--stb-text); }
+.seltb-none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  margin-top: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--stb-border);
+  border-radius: var(--stb-radius);
+  background: transparent;
+  color: var(--stb-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.seltb-none:hover { background: rgba(255, 255, 255, 0.08); }
+
+@keyframes seltb-pop {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- touch ---------- */
+@media (pointer: coarse) {
+  .seltb-btn { min-width: 36px; height: 36px; }
+  .seltb-ind { bottom: 5px; left: 9px; right: 19px; }
+  .seltb-item { min-height: 40px; }
+  .seltb-sw { width: 32px; height: 32px; }
+  .seltb-colors { width: 208px; }
+  .seltb-none { min-height: 38px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seltb, .seltb-btn, .seltb-sw { transition: none; }
+  .seltb { transform: none; }
+  .seltb-pop { animation: none; }
+}

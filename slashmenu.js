@@ -73,7 +73,10 @@
     if (!c.list.length) {
       const d = document.createElement("div");
       d.className = "slash-empty";
-      d.textContent = "No matches";
+      const ins = c.api.insert;
+      d.textContent = ins && ins.items ? "No matches"
+        : ins ? "Old insertmenu.js is still being served (clear the cache / service worker)"
+        : "insertmenu.js did not load (see the browser console for an error)";
       c.el.appendChild(d);
       c.ta.removeAttribute("aria-activedescendant");
     } else {

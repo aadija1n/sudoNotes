@@ -38,13 +38,8 @@
 .blk-menu { z-index: 60; min-width: 170px; }
 .blk-menu button:focus-visible { background: rgba(138, 180, 255, 0.14); outline: none; }
 
-/* undo notice after Delete */
+/* undo notice after Delete: lives inside #toasts (bottom right), styled like a toast with an action button */
 .blk-undo {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  z-index: 55;
   display: flex;
   align-items: center;
   gap: 14px;

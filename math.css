@@ -1,0 +1,79 @@
+/* Phase 10B: math. KaTeX itself is styled by lib/katex/katex.min.css (linked before this file). */
+
+.math { color: inherit; }
+.math .katex { color: var(--text, #e8e8ee); font-size: 1.3em; }
+.md .math-display .katex { font-size: 1.45em; }
+
+/* display: centred, scrolls sideways instead of wrapping */
+.md .math-display {
+  display: block;
+  margin: 1em 0;
+  padding: 2px 0;
+  text-align: left;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border, rgba(255, 255, 255, 0.2)) transparent;
+}
+/* $$ ... $$ in the middle of a paragraph is a span, so it stays inline-block */
+.md span.math-display {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0.25em 0;
+  vertical-align: middle;
+}
+/* KaTeX centres display formulas itself (.katex-display); override it so they sit on the left */
+.md .math-display .katex-display,
+.md .math-display .katex-display > .katex { margin: 0; text-align: left; }
+.md .math-display .katex-display > .katex > .katex-html { text-align: left; }
+.md .math-display::-webkit-scrollbar { height: 6px; }
+.md .math-display::-webkit-scrollbar-thumb { background: var(--border, rgba(255, 255, 255, 0.2)); border-radius: 3px; }
+
+.md .math-inline { padding: 0; }
+
+/* raw TeX while KaTeX loads, for an empty formula, or when the library is missing */
+.md .math-pending {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 1.05em;
+  color: var(--text, #e8e8ee);
+  opacity: 1;
+  white-space: pre-wrap;
+  text-align: left;
+}
+.md .math-failed { text-decoration: none; }
+
+/* a broken formula: raw TeX in monospace, a short message next to it */
+.md .math-error {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 0.9em;
+  color: inherit;
+  white-space: pre-wrap;
+  text-align: left;
+}
+.md span.math-error {
+  display: inline;
+  border-bottom: 1px solid #ff8a8a;
+}
+.md div.math-error {
+  border: 1px solid #ff8a8a;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.md .math-error .math-src {
+  /* neutral against notes.css `code` rules */
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+}
+.md .math-error .math-msg {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-sans, inherit);
+  font-size: 0.78em;
+  color: #ff8a8a;
+  opacity: 0.9;
+}
+.md span.math-error .math-msg { display: inline; margin: 0 0 0 6px; }

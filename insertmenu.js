@@ -16,48 +16,103 @@
 
   const LANGS = [["plain text", ""], ["javascript"], ["python"], ["c"], ["cpp"], ["java"], ["bash"], ["sql"], ["html"], ["css"], ["json"], ["markdown"], ["mermaid"]];
 
-  const item = (act, label, sample) =>
-    `<button type="button" role="menuitem" class="ins-item" data-act="${act}"><span>${label}</span>${sample ? `<span class="ins-hint">${sample}</span>` : ""}</button>`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  const MENU_HTML = `
-    <div class="ins-label" role="presentation">Text</div>
-    ${item("p", "Paragraph", "")}
-    <div class="ins-chips" role="group" aria-label="Headings">
-      ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" role="menuitem" class="ins-chip" data-act="h${n}" aria-label="Heading ${n}" title="Heading ${n}">H${n}</button>`).join("")}
-    </div>
-    <div class="ins-label" role="presentation">Lists</div>
-    ${item("ul", "Bulleted list", "-")}
-    ${item("ol", "Numbered list", "1.")}
-    ${item("task", "Task list", "- [ ]")}
-    <div class="ins-label" role="presentation">Blocks</div>
-    ${item("quote", "Quote", "&gt;")}
-    ${item("code", "Code block", "```")}
-    ${item("hr", "Horizontal rule", "---")}
-    ${item("html", "Raw HTML", "&lt;div&gt;")}
-    <div class="ins-label" role="presentation">Link</div>
-    ${item("link", "Link…", "[text](url)")}`;
-
-  /* ---------- inserting ---------- */
+  /* ---------- inserting ----------
+     No target ("+" menu): a new block after the active one.
+     target = { ta, commit } (slash menu): the template replaces the text of that block's textarea. */
   function insert(text, o) {
     const h = getHandle && getHandle();
     if (!h) { hint(); return false; }
     return h.insertAfterActive(text, o);
   }
 
-  function run(act) {
-    const h = /^h([1-6])$/.exec(act);
-    if (h) { insert("#".repeat(+h[1]) + " "); return; }
-    switch (act) {
-      case "p": insert(""); break;
-      case "ul": insert("- "); break;
-      case "ol": insert("1. "); break;
-      case "task": insert("- [ ] "); break;
-      case "quote": insert("> "); break;
-      case "hr": insert("---", { edit: false }); break;
-      case "html": insert("<div>\n\n</div>", { caret: 6 }); break;
-      case "code": codeDialog(); break;
-      case "link": linkDialog(); break;
+  function writeTa(ta, text, caret) { // select all + insertText keeps Ctrl+Z; exactly one `input` event
+    ta.focus();
+    const before = ta.value;
+    ta.setSelectionRange(0, before.length);
+    let n = 0;
+    const count = () => { n++; };
+    ta.addEventListener("input", count);
+    let ok = false;
+    try { ok = text === "" ? (before === "" || document.execCommand("delete")) : document.execCommand("insertText", false, text); } catch { ok = false; }
+    ta.removeEventListener("input", count);
+    if (!ok || ta.value !== text) { ta.value = text; if (n === 0) ta.dispatchEvent(new Event("input", { bubbles: true })); }
+    else if (n === 0 && before !== text) ta.dispatchEvent(new Event("input", { bubbles: true }));
+    const c = Number.isInteger(caret) ? Math.max(0, Math.min(caret, text.length)) : text.length;
+    ta.setSelectionRange(c, c);
+  }
+
+  /* shared by the built-in items and by later phases' register({... run: (t) => NotesInsert.put(text, opts, t) }) */
+  function put(text, o, target) {
+    o = o || {};
+    if (!target) return insert(text, o);
+    if (target.ta && target.ta.isConnected) {
+      writeTa(target.ta, text, o.caret);
+      if (o.edit === false && target.commit) target.commit();
+      return true;
     }
+    const h = getHandle && getHandle(); // the block is gone (a dialog took the focus): fall back to a new block
+    return h ? h.insertAfterActive(text, o) : false;
+  }
+
+  /* a dialog steals the focus, which would commit the block holding "/": clear it first */
+  const clearTarget = (target) => { if (target && target.ta && target.ta.isConnected) writeTa(target.ta, "", 0); };
+
+  /* ---------- registry: { id, label, hint, group, keywords, run(target), chip? } ---------- */
+  const registry = [];
+  function register(entry) {
+    if (!entry || !entry.id || typeof entry.run !== "function") return false;
+    const e = {
+      id: String(entry.id), label: entry.label || String(entry.id), hint: entry.hint || "", group: entry.group || "More",
+      keywords: [].concat(entry.keywords || []), chip: !!entry.chip, run: entry.run,
+    };
+    const i = registry.findIndex((x) => x.id === e.id);
+    if (i >= 0) registry[i] = e; else registry.push(e);
+    return true;
+  }
+
+  register({ id: "p", label: "Paragraph", group: "Text", keywords: ["text", "p"], run: (t) => put("", {}, t) });
+  [1, 2, 3, 4, 5, 6].forEach((n) => register({
+    id: "h" + n, label: "Heading " + n, hint: "#".repeat(n), group: "Text", chip: true,
+    keywords: ["h" + n, "heading", "title"], run: (t) => put("#".repeat(n) + " ", {}, t),
+  }));
+  register({ id: "ul", label: "Bulleted list", hint: "-", group: "Lists", keywords: ["ul", "bullet", "list"], run: (t) => put("- ", {}, t) });
+  register({ id: "ol", label: "Numbered list", hint: "1.", group: "Lists", keywords: ["ol", "number", "list"], run: (t) => put("1. ", {}, t) });
+  register({ id: "task", label: "Task list", hint: "- [ ]", group: "Lists", keywords: ["todo", "checkbox", "task"], run: (t) => put("- [ ] ", {}, t) });
+  register({ id: "quote", label: "Quote", hint: ">", group: "Blocks", keywords: ["blockquote", ">"], run: (t) => put("> ", {}, t) });
+  register({ id: "code", label: "Code block", hint: "```", group: "Blocks", keywords: ["code", "fence", "pre"], run: (t) => codeDialog(t) });
+  register({ id: "hr", label: "Horizontal rule", hint: "---", group: "Blocks", keywords: ["hr", "divider", "line"], run: (t) => put("---", { edit: false }, t) });
+  register({ id: "html", label: "Raw HTML", hint: "<div>", group: "Blocks", keywords: ["html", "div", "tag"], run: (t) => put("<div>\n\n</div>", { caret: 6 }, t) });
+  register({ id: "link", label: "Link…", hint: "[text](url)", group: "Link", keywords: ["link", "url"], run: (t) => linkDialog(t) });
+
+  const itemHtml = (e) =>
+    `<button type="button" role="menuitem" class="ins-item" data-act="${esc(e.id)}"><span>${esc(e.label)}</span>${e.hint ? `<span class="ins-hint">${esc(e.hint)}</span>` : ""}</button>`;
+  const chipHtml = (e) =>
+    `<button type="button" role="menuitem" class="ins-chip" data-act="${esc(e.id)}" aria-label="${esc(e.label)}" title="${esc(e.label)}">${esc(e.id.toUpperCase())}</button>`;
+
+  function menuHtml() { // groups in order of first appearance; consecutive chips share one row
+    const groups = [];
+    registry.forEach((e) => {
+      let g = groups.find((x) => x.name === e.group);
+      if (!g) { g = { name: e.group, items: [] }; groups.push(g); }
+      g.items.push(e);
+    });
+    return groups.map((g) => {
+      let h = `<div class="ins-label" role="presentation">${esc(g.name)}</div>`;
+      let chips = [];
+      const flush = () => { if (chips.length) h += `<div class="ins-chips" role="group" aria-label="${esc(g.name)}">${chips.map(chipHtml).join("")}</div>`; chips = []; };
+      g.items.forEach((e) => { if (e.chip) chips.push(e); else { flush(); h += itemHtml(e); } });
+      flush();
+      return h;
+    }).join("");
+  }
+
+  function runItem(id, target) {
+    const e = registry.find((x) => x.id === id);
+    if (!e) return false;
+    e.run(target);
+    return true;
   }
 
   /* ---------- the menu ---------- */
@@ -81,7 +136,7 @@
     menu.className = "menu ins-menu";
     menu.setAttribute("role", "menu");
     menu.setAttribute("aria-label", "Insert a block");
-    menu.innerHTML = MENU_HTML;
+    menu.innerHTML = menuHtml();
     document.body.appendChild(menu);
     placeMenu(btn);
     const first = menu.querySelector("button");
@@ -92,7 +147,7 @@
       if (!b) return;
       const act = b.dataset.act;
       closeMenu();
-      run(act);
+      runItem(act);
     });
     menu.addEventListener("keydown", (e) => {
       const items = [...menu.querySelectorAll("button")];
@@ -148,7 +203,8 @@
     return ok ? u.replace(/\(/g, "%28").replace(/\)/g, "%29") : null;
   }
 
-  function linkDialog() {
+  function linkDialog(target) {
+    clearTarget(target);
     const wrap = openDialog(`
       <form class="modal" role="dialog" aria-modal="true" aria-labelledby="ins-title" autocomplete="off" novalidate>
         <h2 id="ins-title">Insert link</h2>
@@ -170,15 +226,16 @@
       if (!text) { err.textContent = "Enter the link text."; form.elements.text.focus(); return; }
       if (!url) { err.textContent = "The URL must start with http://, https:// or mailto:, or be a relative path (no spaces)."; form.elements.url.focus(); return; }
       closeDialog();
-      insert(`[${text.replace(/[[\]\\]/g, "\\$&")}](${url})`);
+      put(`[${text.replace(/[[\]\\]/g, "\\$&")}](${url})`, {}, target);
     });
   }
 
-  function insertCode(lang) {
-    insert("```" + lang + "\n\n```", { caret: 3 + lang.length + 1 }); // caret on the empty middle line
+  function insertCode(lang, target) {
+    put("```" + lang + "\n\n```", { caret: 3 + lang.length + 1 }, target); // caret on the empty middle line
   }
 
-  function codeDialog() {
+  function codeDialog(target) {
+    clearTarget(target);
     const wrap = openDialog(`
       <form class="modal" role="dialog" aria-modal="true" aria-labelledby="ins-title" autocomplete="off" novalidate>
         <h2 id="ins-title">Code block language</h2>
@@ -199,7 +256,7 @@
       const b = e.target.closest(".ins-lang");
       if (!b) return;
       closeDialog();
-      insertCode(b.dataset.lang);
+      insertCode(b.dataset.lang, target);
     });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -207,7 +264,7 @@
       if (!v) { err.textContent = "Pick a language above or type one."; form.elements.lang.focus(); return; }
       if (!/^[A-Za-z0-9_+#.-]{1,30}$/.test(v)) { err.textContent = "Use letters, digits and + # . - _ only (no spaces)."; form.elements.lang.focus(); return; }
       closeDialog();
-      insertCode(v);
+      insertCode(v, target);
     });
   }
 
@@ -229,6 +286,10 @@
   window.addEventListener("resize", closeMenu);
 
   global.NotesInsert = {
+    items: () => registry.slice(),
+    register,
+    run: runItem,
+    put,
     attach(getter) {
       getHandle = getter;
       body.classList.add("ed-open");

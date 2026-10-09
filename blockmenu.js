@@ -115,7 +115,6 @@
     hideUndo();
     const el = document.createElement("div");
     el.className = "blk-undo";
-    el.setAttribute("role", "status");
     const msg = document.createElement("span");
     msg.textContent = "Block deleted";
     const btn = document.createElement("button");
@@ -127,7 +126,8 @@
       if (api) api.restoreBlock(rec);
     });
     el.append(msg, btn);
-    document.body.appendChild(el);
+    // same corner and stack as the app's toasts (bottom right); fall back to the page if that container is missing
+    (document.getElementById("toasts") || document.body).appendChild(el);
     undoEl = el;
     undoTimer = setTimeout(hideUndo, 8000);
   }

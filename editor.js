@@ -170,7 +170,10 @@
     s.cancel.addEventListener("click", cancel);
     s.toggle.addEventListener("click", toggleView);
     mount(container);
-    if (showBlocks("This note uses syntax the block editor cannot split safely, so it opened as plain text.")) ta.hidden = true;
+    if (showBlocks("This note uses syntax the block editor cannot split safely, so it opened as plain text.")) {
+      ta.hidden = true;
+      if (s.blocks) s.blocks.insertAfterActive("", { edit: true }); // start with the cursor in a new block at the end (dropped again if left empty)
+    }
     else { s.host.hidden = true; s.toggle.hidden = true; ta.focus(); } // no block view for this note
     if (global.NotesInsert) global.NotesInsert.attach(() => (s && s.view === "blocks" ? s.blocks : null));
     return true;
