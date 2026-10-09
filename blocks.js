@@ -164,6 +164,7 @@
       ta.addEventListener("input", () => grow(ta));
       ta.addEventListener("blur", () => commit());
       ta.addEventListener("keydown", (e) => {
+        if (global.NotesFormat && global.NotesFormat.handleKey(e, ta)) return;
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitAndNext(); }
       });

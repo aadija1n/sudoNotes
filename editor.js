@@ -155,6 +155,7 @@
       blocks: null, view: "source",
     };
     ta.addEventListener("input", () => { grow(); syncUnload(); });
+    ta.addEventListener("keydown", (e) => { if (global.NotesFormat) global.NotesFormat.handleKey(e, ta); }); // 9E: formatting shortcuts in Source view
     ta.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
