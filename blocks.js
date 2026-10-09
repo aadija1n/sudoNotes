@@ -161,6 +161,7 @@
       wrap.classList.add("editing");
       wrap.removeAttribute("title");
       wrap.replaceChildren(ta);
+      if (global.NotesSlash) global.NotesSlash.attach(ta, { commit, insert: global.NotesInsert }); // 9G: before the other listeners
       ta.addEventListener("input", () => grow(ta));
       ta.addEventListener("blur", () => commit());
       ta.addEventListener("paste", (e) => { if (global.NotesSmart) global.NotesSmart.handlePaste(e, ta, ctx); });
