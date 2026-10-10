@@ -128,8 +128,17 @@
     if (!ta || ta.readOnly || ta.disabled) return false;
     recordRecent(tex);
 
-    const s = ta.selectionStart;
-    const e = ta.selectionEnd;
+    let s = ta.selectionStart;
+    let e = ta.selectionEnd;
+
+    // Automatically remove leading / or standalone slash left over from slash menu trigger
+    if (/^\/[\w+-]*$/.test(ta.value.trim())) {
+      s = 0;
+      e = ta.value.length;
+    } else if (s === e && s > 0 && ta.value[s - 1] === "/" && (s === 1 || /\s/.test(ta.value[s - 2] || ""))) {
+      s = s - 1;
+    }
+
     const ctx = contextAt(ta.value, s);
 
     let ins = tex;
@@ -344,9 +353,45 @@
     }
   }
 
+  function getSymbolPreviewTex(sym) {
+    if (!sym || !sym.tex) return "";
+    const t = sym.tex;
+    if (t === "\\binom{}{}") return "\\binom{n}{k}";
+    if (t === "\\frac{}{}") return "\\frac{a}{b}";
+    if (t === "\\sqrt{}") return "\\sqrt{x}";
+    if (t === "\\vec{}") return "\\vec{v}";
+    if (t === "\\mathbf{}") return "\\mathbf{X}";
+    if (t === "\\hat{}") return "\\hat{u}";
+    if (t === "\\ce{}") return "\\mathrm{H_2O}";
+    if (t === "\\mathcal{O}({})") return "\\mathcal{O}(n)";
+    if (t === "\\Theta({})") return "\\Theta(n)";
+    if (t === "\\Omega({})") return "\\Omega(n)";
+    if (t === "\\lfloor{}\\rfloor") return "\\lfloor x \\rfloor";
+    if (t === "\\lceil{}\\rceil") return "\\lceil x \\rceil";
+    if (t === "\\bmod") return "\\text{mod}";
+    if (t === "\\operatorname{rank}") return "\\text{rk}";
+    if (t === "\\operatorname{span}") return "\\text{span}";
+    if (t === "\\operatorname{Tr}") return "\\text{Tr}";
+    if (t === "\\operatorname{Var}") return "\\text{Var}";
+    if (t === "\\operatorname{Cov}") return "\\text{Cov}";
+    if (t === "\\AA") return "\\text{Å}";
+
+    if (t.includes("{}")) {
+      return t.replace(/\{\}/g, "{x}");
+    }
+    return t;
+  }
+
   function openPalette(ta) {
     closePalette();
     paletteTargetTa = ta || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
+
+    // If active block only contains slash trigger (e.g. "/"), clear it immediately
+    if (paletteTargetTa && /^\/[\w+-]*$/.test(paletteTargetTa.value.trim())) {
+      paletteTargetTa.value = "";
+      paletteTargetTa.setSelectionRange(0, 0);
+      paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
+    }
 
     const wrap = document.createElement("div");
     wrap.className = "math-palette";
@@ -355,9 +400,16 @@
     wrap.setAttribute("aria-label", "Math symbols palette");
 
     wrap.innerHTML = `
+      <div class="math-palette-titlebar">
+        <span class="math-palette-title">📐 Math Symbols</span>
+        <span class="math-palette-drag-hint">⋮⋮ Drag</span>
+        <button type="button" class="math-palette-close" title="Close palette (Esc)">✕</button>
+      </div>
       <div class="math-palette-head">
-        <input type="search" class="math-palette-search" placeholder="Search math symbols (e.g. alpha, le, sum, matrix)…" aria-label="Search symbols" spellcheck="false" autocomplete="off" />
-        <button type="button" class="math-palette-close" aria-label="Close palette">✕</button>
+        <div class="math-palette-search-wrap">
+          <input type="search" class="math-palette-search" placeholder="Search ~250 symbols (alpha, sum, infty, le, matrix)…" aria-label="Search symbols" spellcheck="false" autocomplete="off" />
+          <button type="button" class="math-palette-clear-search" style="display:none;" title="Clear search">✕</button>
+        </div>
       </div>
       <div class="math-palette-chips">
         <button type="button" class="math-chip active" data-group="All">All</button>
@@ -368,14 +420,17 @@
       <div class="math-palette-body"></div>
     `;
 
+    const titlebar = wrap.querySelector(".math-palette-titlebar");
     const body = wrap.querySelector(".math-palette-body");
     const searchInput = wrap.querySelector(".math-palette-search");
+    const clearSearchBtn = wrap.querySelector(".math-palette-clear-search");
     const chips = wrap.querySelectorAll(".math-chip");
 
     let activeGroup = "All";
 
     function renderGrid() {
       const q = searchInput.value.trim().toLowerCase();
+      clearSearchBtn.style.display = q ? "block" : "none";
       body.replaceChildren();
 
       let symbols = global.NotesMathData ? global.NotesMathData.SYMBOLS : [];
@@ -395,7 +450,7 @@
       }
 
       if (!symbols.length) {
-        body.innerHTML = `<p style="padding:24px;text-align:center;color:var(--text-muted)">No symbols found.</p>`;
+        body.innerHTML = `<p style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No symbols found.</p>`;
         return;
       }
 
@@ -407,20 +462,38 @@
         const b = document.createElement("button");
         b.type = "button";
         b.className = `math-sym-btn ${favs.has(sym.tex) ? "is-fav" : ""}`;
-        b.title = `${sym.tex} (${sym.name})`;
+        b.title = `${sym.tex} (${sym.name || ""})`;
         b.setAttribute("aria-label", sym.name || sym.tex);
 
-        // Render with KaTeX or fallback
+        const previewTex = getSymbolPreviewTex(sym);
         const preview = document.createElement("span");
-        preview.className = "math math-inline";
-        preview.textContent = sym.tex.replace(/\{\}/g, "");
+        preview.className = "math-sym-glyph";
+
+        let rendered = false;
+        if (global.katex && typeof global.katex.render === "function") {
+          try {
+            global.katex.render(previewTex, preview, {
+              throwOnError: false,
+              displayMode: false,
+              strict: "ignore",
+            });
+            rendered = true;
+          } catch {
+            rendered = false;
+          }
+        }
+        if (!rendered) {
+          preview.className = "math-sym-glyph math math-inline";
+          preview.dataset.tex = previewTex;
+          preview.textContent = previewTex;
+        }
         b.appendChild(preview);
 
         const star = document.createElement("button");
         star.type = "button";
         star.className = "star-btn";
         star.textContent = favs.has(sym.tex) ? "★" : "☆";
-        star.title = "Toggle favorite (F)";
+        star.title = "Toggle favorite";
         star.addEventListener("click", (e) => {
           e.stopPropagation();
           const on = toggleFavorite(sym.tex);
@@ -441,10 +514,18 @@
       });
 
       body.appendChild(grid);
-      if (global.NotesMath && global.NotesMath.render) global.NotesMath.render(body);
+      if (global.NotesMath && global.NotesMath.render) {
+        global.NotesMath.render(body);
+      }
     }
 
     searchInput.addEventListener("input", renderGrid);
+    clearSearchBtn.addEventListener("click", () => {
+      searchInput.value = "";
+      renderGrid();
+      searchInput.focus();
+    });
+
     chips.forEach((c) => {
       c.addEventListener("click", () => {
         chips.forEach((x) => x.classList.remove("active"));
@@ -463,42 +544,63 @@
       }
     });
 
-    // Position palette smart docked to the side so edited text is ALWAYS visible
+    // Smart Positioning: Pinned to top right of screen so note content is completely visible
     const vpW = window.innerWidth, vpH = window.innerHeight;
-    const r = paletteTargetTa ? paletteTargetTa.getBoundingClientRect() : null;
-    if (r && vpW > 920) {
-      if (r.right + 390 <= vpW - 16) {
-        wrap.style.left = `${Math.max(16, r.right + 16)}px`;
-        wrap.style.right = "auto";
-      } else if (r.left - 390 >= 16) {
-        wrap.style.left = `${Math.max(16, r.left - 396)}px`;
-        wrap.style.right = "auto";
-      } else {
-        wrap.style.right = "16px";
-        wrap.style.left = "auto";
-      }
-      wrap.style.top = `${Math.max(64, Math.min(r.top, vpH - 520))}px`;
+    if (vpW >= 960) {
+      wrap.style.top = "72px";
+      wrap.style.right = "24px";
+      wrap.style.left = "auto";
       wrap.style.bottom = "auto";
-      wrap.style.transform = "none";
-      wrap.style.width = "380px";
-      wrap.style.maxHeight = `${Math.min(560, vpH - 80)}px`;
-    } else if (vpW > 720) {
-      wrap.style.top = "64px";
+      wrap.style.width = "400px";
+      wrap.style.maxHeight = `${Math.min(580, vpH - 96)}px`;
+    } else if (vpW >= 768) {
+      wrap.style.top = "72px";
       wrap.style.right = "16px";
       wrap.style.left = "auto";
       wrap.style.bottom = "auto";
-      wrap.style.transform = "none";
       wrap.style.width = "360px";
-      wrap.style.maxHeight = `${vpH - 80}px`;
+      wrap.style.maxHeight = `${Math.min(540, vpH - 88)}px`;
     } else {
-      wrap.style.bottom = "10px";
-      wrap.style.left = "10px";
-      wrap.style.right = "10px";
+      wrap.style.bottom = "0";
+      wrap.style.left = "0";
+      wrap.style.right = "0";
       wrap.style.top = "auto";
-      wrap.style.transform = "none";
-      wrap.style.width = "auto";
-      wrap.style.maxHeight = "46vh";
+      wrap.style.width = "100%";
+      wrap.style.maxHeight = "52vh";
+      wrap.style.borderRadius = "16px 16px 0 0";
     }
+
+    // Draggable Titlebar (drag anywhere on screen)
+    let isDragging = false, startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+    titlebar.addEventListener("mousedown", (e) => {
+      if (e.target.closest("button")) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = wrap.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+      wrap.style.right = "auto";
+      wrap.style.bottom = "auto";
+      wrap.style.left = `${initialLeft}px`;
+      wrap.style.top = `${initialTop}px`;
+      document.body.style.userSelect = "none";
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const newL = Math.max(10, Math.min(window.innerWidth - wrap.offsetWidth - 10, initialLeft + dx));
+      const newT = Math.max(10, Math.min(window.innerHeight - wrap.offsetHeight - 10, initialTop + dy));
+      wrap.style.left = `${newL}px`;
+      wrap.style.top = `${newT}px`;
+    });
+    window.addEventListener("mouseup", () => {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.userSelect = "";
+      }
+    });
 
     document.body.appendChild(wrap);
     paletteEl = wrap;
@@ -860,7 +962,14 @@
       hint: "Ctrl+Alt+M",
       group: "Math",
       keywords: ["symbols", "greek", "palette", "latex"],
-      run: (t) => openPalette(t && t.ta ? t.ta : null),
+      run: (t) => {
+        if (t && t.ta && /^\/[\w+-]*$/.test(t.ta.value.trim())) {
+          t.ta.value = "";
+          t.ta.setSelectionRange(0, 0);
+          t.ta.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        openPalette(t && t.ta ? t.ta : null);
+      },
     });
 
     // Fill-in templates (10D1 & 10D2)

@@ -160,6 +160,12 @@
   }
 
   function showError(el, tex, err) {
+    if (el.closest && el.closest(".math-palette")) {
+      el.classList.remove("math-pending");
+      el.textContent = tex.replace(/[\\{}]/g, "") || "sym";
+      el.dataset.done = "1";
+      return;
+    }
     el.classList.remove("math-pending");
     el.classList.add("math-error");
     el.textContent = "";

@@ -43,53 +43,101 @@
 }
 
 /* ---------- Symbol Palette modal / popover ---------- */
+/* ---------- Symbol Palette modal / popover ---------- */
 .math-palette {
   position: fixed;
   z-index: 65;
-  width: min(520px, calc(100vw - 20px));
-  max-height: min(580px, calc(100vh - 40px));
+  width: min(410px, calc(100vw - 20px));
+  max-height: min(580px, calc(100vh - 84px));
   display: flex;
   flex-direction: column;
-  background: var(--surface, #17171d);
+  background: var(--surface, #141419);
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.28));
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
+  border-radius: 14px;
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.75);
   animation: toast-in 0.18s var(--ease, ease);
   color: var(--text, #ececf1);
   overflow: hidden;
+  user-select: none;
+}
+
+.math-palette-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 6px;
+  cursor: grab;
+  background: #181820;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+}
+.math-palette-titlebar:active {
+  cursor: grabbing;
+}
+.math-palette-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text, #ececf1);
+  letter-spacing: -0.01em;
+}
+.math-palette-drag-hint {
+  font-size: 11px;
+  color: var(--text-muted, #9b9ba6);
+  opacity: 0.6;
 }
 
 .math-palette-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  gap: 8px;
+  padding: 10px 14px 8px;
 }
 
-.math-palette-search {
+.math-palette-search-wrap {
+  position: relative;
   flex: 1;
-  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+}
+.math-palette-search {
+  width: 100%;
+  padding: 7px 28px 7px 12px;
   background: #0a0a0d;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-radius: 8px;
   color: var(--text, #ececf1);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
 }
 .math-palette-search:focus {
   outline: none;
   border-color: var(--accent, #8ab4ff);
+}
+.math-palette-clear-search {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #9b9ba6);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.math-palette-clear-search:hover {
+  color: var(--text, #ececf1);
 }
 
 .math-palette-close {
   background: transparent;
   border: 0;
   color: var(--text-muted, #9b9ba6);
-  font-size: 18px;
+  font-size: 16px;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 6px;
+  line-height: 1;
 }
 .math-palette-close:hover {
   background: var(--surface-hover, #1c1c23);
@@ -99,21 +147,21 @@
 .math-palette-chips {
   display: flex;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 6px 14px 10px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
   scrollbar-width: none;
 }
 .math-palette-chips::-webkit-scrollbar { display: none; }
 
 .math-chip {
   flex: none;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   border-radius: 999px;
   background: transparent;
   color: var(--text-muted, #9b9ba6);
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: pointer;
   transition: all 0.15s var(--ease, ease);
 }
@@ -135,60 +183,74 @@
   overscroll-behavior: contain;
 }
 
-.math-sec-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 12px 0 6px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted, #9b9ba6);
-}
-.math-sec-title:first-child { margin-top: 0; }
-
 .math-symbol-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
   gap: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .math-sym-btn {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 42px;
+  height: 44px;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   border-radius: 8px;
-  background: #0a0a0d;
+  background: #0b0b0f;
   color: var(--text, #ececf1);
-  font-size: 15px;
   cursor: pointer;
   position: relative;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  padding: 0 4px;
   transition: all 0.12s var(--ease, ease);
 }
 .math-sym-btn:hover {
-  background: var(--surface-hover, #1c1c23);
+  background: rgba(138, 180, 255, 0.12);
   border-color: var(--accent, #8ab4ff);
   transform: translateY(-1px);
+}
+.math-sym-glyph {
+  font-size: 16px;
+  line-height: 1;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+}
+.math-sym-glyph .katex {
+  font-size: 1.05em;
 }
 .math-sym-btn .star-btn {
   position: absolute;
   top: 1px;
-  right: 2px;
+  right: 1px;
   font-size: 9px;
   opacity: 0;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 3px;
   border: 0;
   color: #ffd166;
   cursor: pointer;
+  padding: 1px 2px;
+  line-height: 1;
+  z-index: 2;
+  transition: opacity 0.12s ease;
 }
 .math-sym-btn:hover .star-btn,
 .math-sym-btn.is-fav .star-btn {
   opacity: 1;
+}
+
+/* Strictly hide any KaTeX or Math errors inside the symbol palette */
+.math-palette .katex-error,
+.math-palette .math-error,
+.math-palette .math-msg,
+.math-palette .math-src {
+  display: none !important;
 }
 
 /* ---------- Formula Editor Popover (Phase 10E) ---------- */
