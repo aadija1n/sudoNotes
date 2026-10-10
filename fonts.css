@@ -1,4 +1,6 @@
-/* Fonts bundled with the project or system fallbacks so the app looks the same offline. */
+/* Fonts bundled with the project with Google Fonts CDN enhancement so the app looks pristine offline and online. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
 @font-face {
   font-family: "Inter";
   font-style: normal;

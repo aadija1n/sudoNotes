@@ -43,6 +43,8 @@
   font-size: 13.5px;
   line-height: 1.6;
   tab-size: 2;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   transition: border-color 0.18s var(--ease);
 }
 .editor-ta:focus { outline: none; border-color: var(--accent); }

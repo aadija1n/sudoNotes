@@ -199,6 +199,8 @@
       if (prev && ALNUM.test(prev)) return false;
       if (k === "`" && prev === "`") return false;
     }
+    // Prevent swallowing or weird pairing when typing repeated characters like / or < or >
+    if (k === prev) return false;
     replace(ta, s, s, k + close);
     ta.setSelectionRange(s + 1, s + 1);
     return true;

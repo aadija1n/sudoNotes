@@ -1,6 +1,6 @@
-/* Phase 3 / 5R: real data from the notes repository, rendered markdown.
+/* sudoNotes: real data from the notes repository, rendered markdown.
    Phase 8B: chapter and topic menus are live.
-   Phase 10-15: smooth note reading and editing integration. */
+   Phase 10-15: smooth note reading, LaTeX math suite, live block editing, search, and table tools. */
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
@@ -31,11 +31,14 @@ const store = {
 };
 
 function toast(message, ms = 2600) {
+  if (message == null) return;
+  const str = String(message).trim();
+  if (!str || str === "undefined" || str === '"undefined"' || str.toLowerCase() === "undefined") return;
   const host = document.getElementById("toasts");
   if (!host) return;
   const el = document.createElement("div");
   el.className = "toast";
-  el.textContent = message;
+  el.textContent = str;
   host.appendChild(el);
   setTimeout(() => {
     el.classList.add("out");
@@ -156,7 +159,12 @@ function showSkeleton(kind) {
   } else {
     document.body.classList.remove("subject-view");
     app.innerHTML = `
-      <header class="page-head"><h1>Subject List</h1></header>
+      <header class="page-head">
+        <div class="page-head-title">
+          <span class="brand-badge">sudoNotes</span>
+          <h1>Subject List</h1>
+        </div>
+      </header>
       <div class="sk-tiles">${[140, 90, 70, 210, 120, 150].map((w) => `<span class="sk" style="width:${w}px"></span>`).join("")}</div>`;
   }
 }
@@ -203,7 +211,7 @@ function renderError(e) {
   if (e.code === "not-configured") { renderNotConfigured(); return; }
   const local = localScreen(e);
   if (local) {
-    document.title = "Notes";
+    document.title = "sudoNotes";
     app.innerHTML = local;
     return;
   }
@@ -217,7 +225,7 @@ function renderError(e) {
   const extra = e.code === "not-found"
     ? `<p>Check <code>owner</code>, <code>repo</code> and <code>branch</code> in <code>config.js</code>. The notes repository must be public. To change it, click <b>W</b>, log in and choose “Change notes repository”.</p>`
     : "";
-  document.title = "Notes";
+  document.title = "sudoNotes";
   app.innerHTML = `
     <div class="notice">
       <h2>${esc(titles[e.code] || "Something went wrong")}</h2>
@@ -232,7 +240,7 @@ function renderNotConfigured() {
   currentSubject = null;
   subj = null;
   document.body.classList.remove("subject-view");
-  document.title = "Notes";
+  document.title = "sudoNotes";
   app.innerHTML = `
     <div class="notice">
       <h2>No notes source yet</h2>
@@ -247,7 +255,7 @@ function renderNotFound(name) {
   currentSubject = null;
   subj = null;
   document.body.classList.remove("subject-view");
-  document.title = "Notes";
+  document.title = "sudoNotes";
   app.innerHTML = `
     <div class="notice">
       <h2>Subject not found</h2>
@@ -261,7 +269,7 @@ function renderHome() {
   currentSubject = null;
   subj = null;
   document.body.classList.remove("subject-view");
-  document.title = "Notes";
+  document.title = "sudoNotes";
   const last = store.get(LAST_SUBJECT);
   const nr = NotesData.notesRepo();
   const repoLabel = nr ? `${nr.owner}/${nr.repo}` : "";
@@ -274,13 +282,18 @@ function renderHome() {
   const empty = `
     <div class="notice-inline">
       <p>No subjects found yet.</p>
-      <p>Add a note to your notes repository, for example <code>${esc(NotesData.root)}/Python/Chapter 01 - Basics/1.1 Variables.md</code>, and it will appear here.</p>
+      <p>Add a note to your notes repository, for example <code>${esc(NotesData.root)}/Python/Chapter 01 - Basics/1.1 Variables.md</code>, or click <b>W</b> to log in and create one.</p>
     </div>`;
 
   app.innerHTML = `
     <header class="page-head">
-      <h1>Subject List</h1>
-      <button class="icon-btn w-only" id="add-subject" aria-label="Add subject" title="Add subject">+</button>
+      <div class="page-head-title">
+        <span class="brand-badge">sudoNotes</span>
+        <h1>Subject List</h1>
+      </div>
+      <div class="page-head-actions">
+        <button class="icon-btn w-only" id="add-subject" aria-label="Add subject" title="Add subject">+</button>
+      </div>
     </header>
     <section class="tiles">${tiles}</section>
     ${DATA.subjects.length ? "" : empty}
@@ -384,7 +397,7 @@ async function showTopic(id) {
   if (idx === -1) {
     const last = store.get(lastTopicKey(subj.name));
     const lastItem = list.find((t) => t.id === last);
-    document.title = `${subj.name} · Notes`;
+    document.title = `${subj.name} · sudoNotes`;
     const message = !list.length
       ? "This subject has no notes yet."
       : id ? "That topic could not be found. It may have been renamed or moved." : "Pick a topic from the index to start reading.";
@@ -411,7 +424,7 @@ async function showTopic(id) {
 
   const prev = list[idx - 1];
   const next = list[idx + 1];
-  document.title = `${t.label} · ${subj.name}`;
+  document.title = `${t.label} · ${subj.name} · sudoNotes`;
   host.scrollTop = 0;
   host.innerHTML = `
     <article class="note">
@@ -444,8 +457,12 @@ async function showTopic(id) {
       noteCache.set(t.path, text);
     }
     if (token !== noteToken) return;
-    if (!text.trim()) {
-      body.innerHTML = `<p class="empty-note">This note is empty.</p>`;
+    if (!text || !text.trim()) {
+      body.innerHTML = `
+        <div class="empty-note" style="padding:20px 0;">
+          <p>This note is empty.</p>
+          <button type="button" class="btn primary w-only" id="edit-note-empty" style="margin-top:8px;">Start writing</button>
+        </div>`;
     } else {
       const el = NotesRender.toElement(text, t.path.slice(0, t.path.lastIndexOf("/")));
       dropDuplicateTitle(el, t);
@@ -1475,7 +1492,7 @@ async function saveNoteEdit(path, content) {
   try {
     await applyOp(await NotesWrite.run("editNote", { path, content }));
   } catch (e) {
-    if (replaced) { try { await NotesWrite.run("editNote", replaced.args); } catch { /* keep the original error */ } }
+    if (replaced) { try { await NotesWrite.run("editNote", replaced.args); } catch { /* keep original error */ } }
     throw e;
   }
 }
@@ -1565,26 +1582,36 @@ document.addEventListener("click", (e) => {
   const t = e.target;
 
   const menuItem = t.closest(".menu button");
-  if (menuItem) {
+  if (menuItem && !menuItem.closest(".blk-menu")) {
     const action = ACTIONS[menuItem.dataset.action];
     const folder = menuEl ? menuEl.dataset.folder || "" : "";
     const file = menuEl ? menuEl.dataset.file || "" : "";
     closeMenu();
-    if (action) action(folder, file);
-    else toast(`"${menuItem.dataset.label}" arrives soon`);
+    if (action) {
+      action(folder, file);
+    }
     return;
   }
 
   const dots = t.closest(".dots");
-  if (dots) { e.stopPropagation(); openMenu(dots, dots.dataset.menu); return; }
+  if (dots && dots.dataset.menu) { e.stopPropagation(); openMenu(dots, dots.dataset.menu); return; }
   closeMenu();
 
+  /* in-page links (table of contents, footnotes) scroll smoothly inside #note-scroll */
   const anchor = t.closest('a[href^="#"]');
   if (anchor && !anchor.getAttribute("href").startsWith("#/")) {
     e.preventDefault();
     let target = null;
     try { target = document.getElementById(decodeURIComponent(anchor.getAttribute("href").slice(1))); } catch { /* bad escape */ }
-    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (target) {
+      const scrollParent = target.closest("#note-scroll") || target.closest(".note-scroll");
+      if (scrollParent) {
+        const top = target.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top + scrollParent.scrollTop - 20;
+        scrollParent.scrollTo({ top, behavior: "smooth" });
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
     return;
   }
 
@@ -1609,7 +1636,12 @@ document.addEventListener("click", (e) => {
   if (t.closest("#sb-undo")) { doUndo(); return; }
   if (t.closest("#sb-discard")) { discardDialog(); return; }
 
-  if (t.closest("#edit-note")) { startNoteEdit(); return; }
+  if (t.closest("#edit-note") || t.closest("#edit-note-empty")) { startNoteEdit(); return; }
+
+  if (t.closest("#open-search-btn, #open-search-index-btn")) {
+    if (global.NotesSearch && global.NotesSearch.open) global.NotesSearch.open();
+    return;
+  }
 
   if (t.closest("#set-repo")) { guardEditor(() => confirmLeave("Changing the notes repository", () => { NotesEditor.close(); openNotesRepoForm(); })); return; }
 

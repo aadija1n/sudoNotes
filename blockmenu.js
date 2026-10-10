@@ -71,6 +71,7 @@
     menu.querySelector("button").focus();
 
     menu.addEventListener("click", (e) => {
+      e.stopPropagation();
       const b = e.target.closest("button[data-act]");
       if (!b) return;
       const act = b.dataset.act;

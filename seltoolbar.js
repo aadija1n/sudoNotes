@@ -11,8 +11,11 @@
   const doc = document;
 
   const SWATCHES = [
-    ["Red", "#ff6b6b"], ["Orange", "#ffa94d"], ["Yellow", "#ffd43b"], ["Green", "#69db7c"], ["Teal", "#38d9a9"],
-    ["Cyan", "#66d9e8"], ["Blue", "#74c0fc"], ["Violet", "#b197fc"], ["Pink", "#f783ac"], ["Gray", "#adb5bd"],
+    ["Yellow", "#ffd43b"], ["Neon Lime", "#94d82d"], ["Emerald", "#51cf66"], ["Mint", "#38d9a9"], ["Cyan", "#66d9e8"],
+    ["Sky Blue", "#74c0fc"], ["Blue", "#339af0"], ["Indigo", "#4c6ef5"], ["Violet", "#b197fc"], ["Purple", "#845ef7"],
+    ["Pink", "#f783ac"], ["Rose", "#f06595"], ["Crimson", "#ff6b6b"], ["Coral", "#ff8787"], ["Orange", "#ffa94d"],
+    ["Amber", "#fcc419"], ["Gold", "#fab005"], ["Peach", "#ffd8a8"], ["Soft Mint", "#c3fae8"], ["Soft Ice", "#d0ebff"],
+    ["Soft Lavender", "#eebefa"], ["White", "#f8f9fa"], ["Light Gray", "#dee2e6"], ["Slate", "#adb5bd"], ["Charcoal", "#495057"],
   ];
   const ALIGN_HINT = "Alignment works on paragraphs and headings";
 
@@ -96,6 +99,7 @@
       fmt("underline", "<u>U</u>"),
       fmt("strike", "<s>S</s>"),
       fmt("code", '<span class="seltb-mono">&lt;/&gt;</span>'),
+      fmt("kbd", '<kbd class="seltb-kbd-badge">Kbd</kbd>'),
       fmt("highlight", ICONS.highlight),
       sep(),
       colorBtn,
@@ -236,6 +240,7 @@
       openMenu(b, items);
     } else if (act === "more") {
       openMenu(b, [
+        { label: "Keyboard key (<kbd>)", hint: tip("kbd", "").replace(/^.*\(|\)$/g, ""), on: F().isActive(ta, "kbd"), action: (t) => F().apply(t, "kbd") },
         { label: "Superscript", hint: tip("sup", "").replace(/^.*\(|\)$/g, ""), on: F().isActive(ta, "sup"), action: (t) => F().apply(t, "sup") },
         { label: "Subscript", hint: tip("sub", "").replace(/^.*\(|\)$/g, ""), on: F().isActive(ta, "sub"), action: (t) => F().apply(t, "sub") },
         { label: "Clear formatting", icon: ICONS.none, action: (t) => F().clearFormat(t) },

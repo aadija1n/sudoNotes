@@ -8,10 +8,12 @@
     lines.push(`>`);
 
     if (options && options.trim()) {
-      const opts = options.trim().split("\n").filter((l) => l.trim());
+      const opts = options.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+      lines.push(`> <div class="qa-opts">`);
       opts.forEach((opt) => {
-        lines.push(`> - ${opt.trim().replace(/^[-*•]\s*/, "")}`);
+        lines.push(`> <div class="qa-opt">${opt}</div>`);
       });
+      lines.push(`> </div>`);
       lines.push(`>`);
     }
 

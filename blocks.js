@@ -126,7 +126,28 @@
       return rawView(body, "shown as source: this renders as nothing");
     }
 
-    const decorate = (wrap) => { if (global.NotesBlockMenu) global.NotesBlockMenu.decorate(wrap); }; // 9D: the ⋮ handle
+    const getBlockText = (w) => {
+      const b = blkOf(w);
+      return b ? b.body : "";
+    };
+    const updateBlockText = (w, newText) => {
+      const b = blkOf(w);
+      if (!b) return;
+      b.body = newText;
+      w.replaceChildren(renderBody(b.body));
+      decorate(w);
+      changed();
+    };
+
+    const decorate = (wrap) => {
+      if (global.NotesBlockMenu) global.NotesBlockMenu.decorate(wrap);
+      if (global.NotesTable && global.NotesTable.decorateTables) {
+        global.NotesTable.decorateTables(root, getBlockText, updateBlockText);
+      }
+      if (global.NotesExtraBlocks && global.NotesExtraBlocks.decorateRenderedDiagrams) {
+        global.NotesExtraBlocks.decorateRenderedDiagrams(root, getBlockText, updateBlockText);
+      }
+    };
 
     function makeWrap(blk) {
       const wrap = document.createElement("div");
@@ -167,6 +188,8 @@
       if (global.NotesMathInput) global.NotesMathInput.attach(ta); // 10C: math input shortcuts & conversions
       ta.addEventListener("input", () => grow(ta));
       ta.addEventListener("blur", (e) => {
+        // Only commit if this textarea is still the active edit
+        if (!ed || ed.ta !== ta) return;
         // Blur guard: if focus moved to a popover or tool with [data-keep-edit], do not commit!
         if (e && e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-keep-edit]")) {
           return;
@@ -299,21 +322,27 @@
     const blkOf = (wrap) => blocks.find((b) => b.wrap === wrap);
 
     root.addEventListener("mousedown", (e) => {
-      if (locked || !ed || e.button !== 0) return;
+      if (locked || e.button !== 0) return;
       if (e.target.closest(".blk-handle")) return; // 9D: the ⋮ handle never starts an edit
       const wrap = e.target.closest(".blk");
       const onSlot = e.target.closest(".blk-add");
+      if (onSlot) {
+        e.preventDefault();
+        if (ed) commit();
+        ignoreClickUntil = Date.now() + 300;
+        newBlockEdit();
+        return;
+      }
+      if (!ed) return;
       if (wrap && wrap === ed.wrap) return; // inside the textarea: normal behaviour
-      if (onSlot && ed.isNew) { e.preventDefault(); ed.ta.focus(); return; }
       let target = null;
       if (wrap && !e.target.closest(".copy-btn")) target = blkOf(wrap);
-      if (!target && !onSlot) return;
+      if (!target) return;
       e.preventDefault(); // keep control of focus; the layout may shift when the open block re-renders
       const targetWrap = target && target.wrap;
       commit();
-      ignoreClickUntil = Date.now() + 400;
-      if (onSlot) newBlockEdit();
-      else if (target && blocks.includes(target) && targetWrap.isConnected) startEdit(target, targetWrap, false);
+      ignoreClickUntil = Date.now() + 300;
+      if (blocks.includes(target) && targetWrap && targetWrap.isConnected) startEdit(target, targetWrap, false);
     });
 
     root.addEventListener("click", (e) => {

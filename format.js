@@ -14,6 +14,7 @@
     highlight: ["<mark>", "</mark>"],
     sup: ["<sup>", "</sup>"],
     sub: ["<sub>", "</sub>"],
+    kbd: ["<kbd>", "</kbd>"],
   };
 
   const SHORTCUTS = [
@@ -23,6 +24,7 @@
     { name: "strike", label: "Strikethrough", keys: disp("Ctrl+Shift+X"), hint: "~~text~~" },
     { name: "code", label: "Inline code", keys: disp("Ctrl+`"), hint: "`text`" },
     { name: "highlight", label: "Highlight", keys: disp("Ctrl+Shift+H"), hint: "<mark>text</mark>" },
+    { name: "kbd", label: "Keyboard key", keys: disp("Ctrl+Shift+K"), hint: "<kbd>key</kbd>" },
     { name: "sup", label: "Superscript", keys: disp("Ctrl+Shift+."), hint: "<sup>text</sup>" },
     { name: "sub", label: "Subscript", keys: disp("Ctrl+Shift+,"), hint: "<sub>text</sub>" },
     { name: "link", label: "Link", keys: disp("Ctrl+K"), hint: "[text](url)" },
@@ -488,7 +490,7 @@
     for (let i = 0; i < 4; i++) {
       const prev = t;
       t = t
-        .replace(/<\/?(?:u|mark|sup|sub)>/gi, "")
+        .replace(/<\/?(?:u|mark|sup|sub|kbd)>/gi, "")
         .replace(/<span style="([^"]*)">([\s\S]*?)<\/span>/gi, (m, st, inner) => (parseStyle(st) ? inner : m))
         .replace(/(!?)\[([^\]\n]*)\]\([^)\n]*\)/g, (m, bang, txt) => (bang ? m : txt))
         .replace(/(\*{1,3})(?=\S)([\s\S]*?\S)\1(?!\*)/g, "$2")
@@ -513,7 +515,7 @@
       if (a >= b) return false;
     }
     // widen over wrappers that sit exactly around the text
-    const PAIRS = [["**", "**"], ["~~", "~~"], ["<u>", "</u>"], ["<mark>", "</mark>"], ["<sup>", "</sup>"], ["<sub>", "</sub>"], ["*", "*"], ["`", "`"]];
+    const PAIRS = [["**", "**"], ["~~", "~~"], ["<u>", "</u>"], ["<mark>", "</mark>"], ["<sup>", "</sup>"], ["<sub>", "</sub>"], ["<kbd>", "</kbd>"], ["*", "*"], ["`", "`"]];
     let x = a, y = b;
     for (let i = 0; i < 12; i++) {
       let hit = false;

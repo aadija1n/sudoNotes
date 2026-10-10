@@ -93,6 +93,7 @@
 .seltb-caret { font-size: 9px; opacity: 0.6; margin-left: 1px; }
 .seltb-aa { font-weight: 600; font-size: 13px; }
 .seltb-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 600; }
+.seltb-kbd-badge { font-family: var(--font-mono, monospace); font-size: 10px; font-weight: 600; padding: 1px 4px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); text-transform: uppercase; letter-spacing: 0.5px; }
 .seltb-dots { font-size: 16px; letter-spacing: 1px; line-height: 1; }
 .seltb-A { font-weight: 700; font-size: 15px; }
 

@@ -430,9 +430,11 @@
         b.appendChild(star);
 
         b.addEventListener("mousedown", (e) => e.preventDefault());
-        b.addEventListener("click", () => {
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
           if (paletteTargetTa) {
             insertCommand(paletteTargetTa, sym.tex);
+            paletteTargetTa.focus();
           }
         });
         grid.appendChild(b);
@@ -461,10 +463,42 @@
       }
     });
 
-    // Center on screen
-    wrap.style.top = "50%";
-    wrap.style.left = "50%";
-    wrap.style.transform = "translate(-50%, -50%)";
+    // Position palette smart docked to the side so edited text is ALWAYS visible
+    const vpW = window.innerWidth, vpH = window.innerHeight;
+    const r = paletteTargetTa ? paletteTargetTa.getBoundingClientRect() : null;
+    if (r && vpW > 920) {
+      if (r.right + 390 <= vpW - 16) {
+        wrap.style.left = `${Math.max(16, r.right + 16)}px`;
+        wrap.style.right = "auto";
+      } else if (r.left - 390 >= 16) {
+        wrap.style.left = `${Math.max(16, r.left - 396)}px`;
+        wrap.style.right = "auto";
+      } else {
+        wrap.style.right = "16px";
+        wrap.style.left = "auto";
+      }
+      wrap.style.top = `${Math.max(64, Math.min(r.top, vpH - 520))}px`;
+      wrap.style.bottom = "auto";
+      wrap.style.transform = "none";
+      wrap.style.width = "380px";
+      wrap.style.maxHeight = `${Math.min(560, vpH - 80)}px`;
+    } else if (vpW > 720) {
+      wrap.style.top = "64px";
+      wrap.style.right = "16px";
+      wrap.style.left = "auto";
+      wrap.style.bottom = "auto";
+      wrap.style.transform = "none";
+      wrap.style.width = "360px";
+      wrap.style.maxHeight = `${vpH - 80}px`;
+    } else {
+      wrap.style.bottom = "10px";
+      wrap.style.left = "10px";
+      wrap.style.right = "10px";
+      wrap.style.top = "auto";
+      wrap.style.transform = "none";
+      wrap.style.width = "auto";
+      wrap.style.maxHeight = "46vh";
+    }
 
     document.body.appendChild(wrap);
     paletteEl = wrap;
@@ -522,6 +556,166 @@
     document.body.appendChild(wrap);
     updatePreview();
     ta.focus();
+  }
+
+  /* ---------- 7b. Variable Length Matrix Dialog (Custom Dimensions & Live Preview) ---------- */
+  function openMatrixDialog(target) {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    wrap.id = "matrix-modal";
+    wrap.innerHTML = `
+      <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mat-title" style="max-width:540px;width:94vw;">
+        <h2 id="mat-title" style="margin:0 0 4px;font-size:18px;">Insert Matrix</h2>
+        <p style="margin:0 0 14px;font-size:12px;color:var(--text-muted);">Choose variable dimensions, bracket style, and edit cell values:</p>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;padding:8px 12px;background:#15151a;border:1px solid var(--border);border-radius:8px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:12px;color:var(--text-muted);">Rows:</span>
+            <button type="button" class="btn" id="mat-row-dec" style="padding:2px 8px;min-height:26px;">-</button>
+            <input type="number" id="mat-rows" value="3" min="1" max="8" style="width:38px;text-align:center;padding:2px 4px;background:#0a0a0d;border:1px solid var(--border);border-radius:4px;color:var(--text);font:inherit;" />
+            <button type="button" class="btn" id="mat-row-inc" style="padding:2px 8px;min-height:26px;">+</button>
+          </div>
+          <span style="color:var(--text-muted);font-weight:bold;">×</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:12px;color:var(--text-muted);">Cols:</span>
+            <button type="button" class="btn" id="mat-col-dec" style="padding:2px 8px;min-height:26px;">-</button>
+            <input type="number" id="mat-cols" value="3" min="1" max="8" style="width:38px;text-align:center;padding:2px 4px;background:#0a0a0d;border:1px solid var(--border);border-radius:4px;color:var(--text);font:inherit;" />
+            <button type="button" class="btn" id="mat-col-inc" style="padding:2px 8px;min-height:26px;">+</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:12px;color:var(--text-muted);">Type:</span>
+            <select id="mat-type" style="padding:3px 6px;background:#0a0a0d;border:1px solid var(--border);border-radius:4px;color:var(--text);font:inherit;font-size:12px;">
+              <option value="pmatrix">Parentheses ( )</option>
+              <option value="bmatrix">Brackets [ ]</option>
+              <option value="vmatrix">Determinant | |</option>
+              <option value="Bmatrix">Braces { }</option>
+              <option value="matrix">Plain (no bracket)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Matrix Values:</div>
+            <div id="mat-cells-grid" style="display:grid;gap:6px;max-height:180px;overflow-y:auto;padding:8px;background:#0d0d11;border:1px solid var(--border);border-radius:8px;"></div>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">KaTeX Live Preview:</div>
+            <div id="mat-preview-box" style="padding:12px;background:#15151a;border:1px solid var(--border);border-radius:8px;min-height:50px;text-align:center;overflow-x:auto;">
+              <span class="math math-display" id="mat-preview"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top:16px;">
+          <button type="button" class="btn" id="mat-cancel">Cancel</button>
+          <button type="button" class="btn primary" id="mat-insert">Insert Matrix</button>
+        </div>
+      </div>
+    `;
+
+    let rows = 3;
+    let cols = 3;
+    let env = "pmatrix";
+    let cellValues = {};
+
+    const grid = wrap.querySelector("#mat-cells-grid");
+    const preview = wrap.querySelector("#mat-preview");
+    const previewBox = wrap.querySelector("#mat-preview-box");
+    const rowIn = wrap.querySelector("#mat-rows");
+    const colIn = wrap.querySelector("#mat-cols");
+    const typeSelect = wrap.querySelector("#mat-type");
+
+    function generateMatrixTex() {
+      const rowStrings = [];
+      for (let r = 0; r < rows; r++) {
+        const rowCells = [];
+        for (let c = 0; c < cols; c++) {
+          const key = `${r}_${c}`;
+          const val = (cellValues[key] || "").trim() || `${String.fromCharCode(97 + r)}${c + 1}`;
+          rowCells.push(val);
+        }
+        rowStrings.push(rowCells.join(" & "));
+      }
+      return `$$\n\\begin{${env}}\n${rowStrings.join(" \\\\\n")}\n\\end{${env}}\n$$`;
+    }
+
+    function updatePreview() {
+      const tex = generateMatrixTex();
+      preview.textContent = tex;
+      delete preview.dataset.done;
+      preview.className = "math math-display";
+      if (global.NotesMath && global.NotesMath.render) {
+        global.NotesMath.render(previewBox);
+      }
+    }
+
+    function renderCellsGrid() {
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.replaceChildren();
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const key = `${r}_${c}`;
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = cellValues[key] || "";
+          inp.placeholder = `${String.fromCharCode(97 + r)}${c + 1}`;
+          inp.style.cssText = "width:100%;text-align:center;padding:4px;background:#17171f;border:1px solid var(--border);border-radius:4px;color:var(--text);font:inherit;font-size:13px;";
+          inp.addEventListener("input", (e) => {
+            cellValues[key] = e.target.value;
+            updatePreview();
+          });
+          grid.appendChild(inp);
+        }
+      }
+      updatePreview();
+    }
+
+    wrap.querySelector("#mat-row-inc").addEventListener("click", () => {
+      rows = Math.min(8, rows + 1);
+      rowIn.value = rows;
+      renderCellsGrid();
+    });
+    wrap.querySelector("#mat-row-dec").addEventListener("click", () => {
+      rows = Math.max(1, rows - 1);
+      rowIn.value = rows;
+      renderCellsGrid();
+    });
+    wrap.querySelector("#mat-col-inc").addEventListener("click", () => {
+      cols = Math.min(8, cols + 1);
+      colIn.value = cols;
+      renderCellsGrid();
+    });
+    wrap.querySelector("#mat-col-dec").addEventListener("click", () => {
+      cols = Math.max(1, cols - 1);
+      colIn.value = cols;
+      renderCellsGrid();
+    });
+
+    rowIn.addEventListener("change", () => {
+      rows = Math.max(1, Math.min(8, parseInt(rowIn.value, 10) || 3));
+      renderCellsGrid();
+    });
+    colIn.addEventListener("change", () => {
+      cols = Math.max(1, Math.min(8, parseInt(colIn.value, 10) || 3));
+      renderCellsGrid();
+    });
+    typeSelect.addEventListener("change", () => {
+      env = typeSelect.value;
+      updatePreview();
+    });
+
+    wrap.querySelector("#mat-cancel").addEventListener("click", () => wrap.remove());
+    wrap.querySelector("#mat-insert").addEventListener("click", () => {
+      const tex = generateMatrixTex();
+      wrap.remove();
+      if (global.NotesInsert) {
+        global.NotesInsert.put(tex, {}, target);
+      }
+    });
+
+    document.body.appendChild(wrap);
+    renderCellsGrid();
   }
 
   /* ---------- 8. Click on Rendered Math to Edit (Phase 10E) ---------- */
@@ -708,11 +902,11 @@
 
     global.NotesInsert.register({
       id: "math-matrix",
-      label: "Matrix (3×3)",
-      hint: "pmatrix",
+      label: "Matrix (Custom / Variable)",
+      hint: "pmatrix, bmatrix…",
       group: "Math Templates",
       keywords: ["matrix", "array", "determinant", "linear algebra"],
-      run: (t) => global.NotesInsert.put("$$\n\\begin{pmatrix}\na & b & c \\\\\nd & e & f \\\\\ng & h & i\n\\end{pmatrix}\n$$", { caret: 19 }, t),
+      run: (t) => openMatrixDialog(t),
     });
 
     global.NotesInsert.register({

@@ -36,6 +36,8 @@
   font-size: 13.5px;
   line-height: 1.6;
   tab-size: 2;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
 }
 .blk-ta:focus { outline: none; }
 

@@ -1,5 +1,5 @@
 {
-  "name": "Academic Notes App",
+  "name": "sudoNotes",
   "description": "Static GitHub-hosted academic notes app with live block editing, KaTeX math authoring, tables, diagrams, and atomic commits.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
