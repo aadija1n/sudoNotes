@@ -143,7 +143,16 @@ ${mode}};
 
   const segs = (s) => s.split("/").map(encodeURIComponent).join("/");
   const rawBase = (r) => `https://raw.githubusercontent.com/${r.owner}/${r.repo}/${segs(r.branch || "HEAD")}/`;
-  const pathsOf = (data, root) => (data.tree || []).filter((n) => n.type === "blob" && n.path.startsWith(`${root}/`)).map((n) => n.path);
+
+  let detectedAssetPaths = [];
+  const inMemoryAssets = new Map(); // relPath -> { name, relPath, path, url, blob, size, isStaged }
+
+  const isAssetPath = (p) => /^(?:\.assets|\.asset|(?:[^/]+)\/\.assets|(?:[^/]+)\/\.asset)\//i.test(p);
+  const pathsOf = (data, root) => {
+    const blobs = (data.tree || []).filter((n) => n.type === "blob");
+    detectedAssetPaths = blobs.filter((n) => isAssetPath(n.path)).map((n) => n.path);
+    return blobs.filter((n) => n.path.startsWith(`${root}/`) && !isAssetPath(n.path.slice(root.length + 1))).map((n) => n.path);
+  };
   const clearTreeCache = () => {
     try { Object.keys(sessionStorage).filter((k) => k.startsWith("notes:tree:")).forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ }
   };
@@ -179,6 +188,7 @@ ${mode}};
       const parts = p.slice(rootDir.length + 1).split("/");
       if (parts.length < 2) continue; // a loose file directly in the root
       const [subjName, chapDir, file] = parts;
+      if (subjName === ".assets" || subjName === ".asset") continue; // assets folder is never a subject
 
       let subj = subjects.get(subjName);
       if (!subj) subjects.set(subjName, (subj = { name: subjName, chapters: new Map() }));
@@ -321,9 +331,125 @@ ${mode}};
     return repo ? `${rawBase(repo)}${encodedPath}` : null;
   }
 
+  /* ---------- .assets / .asset folder helpers ---------- */
+  function getPreferredAssetFolder() {
+    const hasAsset = detectedAssetPaths.some((p) => p.includes(".asset/"));
+    const hasAssets = detectedAssetPaths.some((p) => p.includes(".assets/"));
+    if (hasAsset && !hasAssets) return ".asset";
+    return ".assets";
+  }
+
+  function registerInMemoryAsset(relPath, blobOrUrl, metadata = {}) {
+    let norm = relPath.replace(/^\.?\//, "");
+    if (!norm.startsWith(".assets/") && !norm.startsWith(".asset/")) {
+      norm = `${getPreferredAssetFolder()}/${norm}`;
+    }
+    const name = norm.split("/").pop();
+    let url = typeof blobOrUrl === "string" ? blobOrUrl : null;
+    if (!url && blobOrUrl instanceof Blob) {
+      url = URL.createObjectURL(blobOrUrl);
+    }
+    const item = {
+      name,
+      relPath: norm,
+      path: norm,
+      url,
+      blob: blobOrUrl instanceof Blob ? blobOrUrl : null,
+      size: metadata.size || (blobOrUrl instanceof Blob ? blobOrUrl.size : 0),
+      isStaged: true,
+    };
+    inMemoryAssets.set(norm, item);
+    // Also alias the other spelling (.asset <-> .assets) for resolution
+    const alt = norm.startsWith(".assets/") ? norm.replace(/^\.assets\//, ".asset/") : norm.replace(/^\.asset\//, ".assets/");
+    inMemoryAssets.set(alt, item);
+    return item;
+  }
+
+  function resolveAssetUrl(src) {
+    if (!src) return src;
+    const clean = src.trim().replace(/^\.?\//, "");
+    if (clean.startsWith(".assets/") || clean.startsWith(".asset/")) {
+      // 1. Check inMemoryAssets
+      if (inMemoryAssets.has(clean)) return inMemoryAssets.get(clean).url;
+
+      // 2. Check local mode
+      if (source() === "local") {
+        if (global.NotesLocal && global.NotesLocal.getAssetUrl) {
+          const u = global.NotesLocal.getAssetUrl(clean);
+          if (u) return u;
+        }
+        return clean;
+      }
+
+      // 3. GitHub mode: construct rawBase URL
+      const repo = notesRepo();
+      if (repo) {
+        let targetPath = clean;
+        const rootPath = `${active.root}/${clean}`;
+        if (detectedAssetPaths.includes(rootPath)) {
+          targetPath = rootPath;
+        } else if (detectedAssetPaths.includes(clean)) {
+          targetPath = clean;
+        } else {
+          // Check alternative spelling (.asset vs .assets)
+          const alt = clean.startsWith(".assets/") ? clean.replace(/^\.assets\//, ".asset/") : clean.replace(/^\.asset\//, ".assets/");
+          const altRoot = `${active.root}/${alt}`;
+          if (detectedAssetPaths.includes(altRoot)) targetPath = altRoot;
+          else if (detectedAssetPaths.includes(alt)) targetPath = alt;
+        }
+        const encoded = targetPath.split("/").map(encodeURIComponent).join("/");
+        return `${rawBase(repo)}${encoded}`;
+      }
+    }
+    return null;
+  }
+
+  async function listAssets() {
+    const list = [];
+    const seen = new Set();
+
+    // 1. In-memory / staged assets
+    for (const [p, item] of inMemoryAssets) {
+      if (seen.has(item.name.toLowerCase())) continue;
+      seen.add(item.name.toLowerCase());
+      list.push(item);
+    }
+
+    // 2. Local mode directory assets
+    if (source() === "local" && global.NotesLocal && global.NotesLocal.listAssets) {
+      try {
+        const localList = await global.NotesLocal.listAssets();
+        for (const it of localList) {
+          if (!seen.has(it.name.toLowerCase())) {
+            seen.add(it.name.toLowerCase());
+            list.push(it);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3. GitHub mode assets from repository tree
+    const repo = notesRepo();
+    for (const fullPath of detectedAssetPaths) {
+      let relPath = fullPath;
+      if (fullPath.startsWith(`${active.root}/`)) {
+        relPath = fullPath.slice(active.root.length + 1);
+      }
+      const name = relPath.split("/").pop();
+      if (!seen.has(name.toLowerCase())) {
+        seen.add(name.toLowerCase());
+        const url = repo ? `${rawBase(repo)}${fullPath.split("/").map(encodeURIComponent).join("/")}` : relPath;
+        list.push({ name, path: fullPath, relPath, url, isStaged: false });
+      }
+    }
+
+    return list;
+  }
+
   global.NotesData = {
     loadData, resetData, loadNote, parseTree, refresh, source, sourceInfo,
     notesRepo, appRepo, isConfigured, setNotesRepo, configText, assetUrl, setOverlay,
+    listAssets, registerInMemoryAsset, resolveAssetUrl, getPreferredAssetFolder,
     get root() { return active.root; },
     setTokenProvider(fn) { tokenProvider = fn; },
   };

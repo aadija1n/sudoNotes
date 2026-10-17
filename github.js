@@ -101,7 +101,21 @@
   /* Writes a ready change list on top of `head` as ONE commit: one tree, one commit, one ref update.
      A branch that moved meanwhile (422/409 on the ref update) becomes the coded error "conflict". Never forces. */
   async function writeCommit(repo, head, changes, message) {
-    const tree = await ghRepo(repo, NOTES, "POST", "/git/trees", { base_tree: head.treeSha, tree: changes }, "prepare the change");
+    const resolvedChanges = [];
+    for (const c of changes) {
+      if (c.base64 && c.content) {
+        // Upload binary blob through GitHub Git Data API
+        const blobRes = await ghRepo(repo, NOTES, "POST", "/git/blobs", { content: c.content, encoding: "base64" }, "upload image asset");
+        resolvedChanges.push({ path: c.path, mode: c.mode || "100644", type: "blob", sha: blobRes.sha });
+      } else {
+        const item = { path: c.path, mode: c.mode || "100644", type: "blob" };
+        if (c.sha === null) item.sha = null;
+        else if (c.content !== undefined) item.content = c.content;
+        else if (c.sha) item.sha = c.sha;
+        resolvedChanges.push(item);
+      }
+    }
+    const tree = await ghRepo(repo, NOTES, "POST", "/git/trees", { base_tree: head.treeSha, tree: resolvedChanges }, "prepare the change");
     const made = await ghRepo(repo, NOTES, "POST", "/git/commits", { message, tree: tree.sha, parents: [head.commitSha] }, "create the commit");
     try {
       await ghRepo(repo, NOTES, "PATCH", refUpdatePath(head.branch), { sha: made.sha }, "update the branch");
@@ -653,6 +667,22 @@
         const cur = entries.find((e) => e.type === "blob" && e.path === path);
         if (!cur) throw fail("missing", "This note no longer exists.");
         return [{ path, mode: cur.mode || "100644", type: "blob", content: a.content }];
+      },
+    },
+
+    /* Adds a binary or text file to the asset folder (.assets or .asset). */
+    addAsset: {
+      label: (a) => `Add image asset: ${a.relPath || String(a.path || "").split("/").pop()}`,
+      plan(entries, a) {
+        const path = a.path;
+        if (!path) throw fail("invalid", "Asset path is required.");
+        return [{
+          path,
+          mode: "100644",
+          type: "blob",
+          content: a.content,
+          base64: !!a.base64,
+        }];
       },
     },
   };

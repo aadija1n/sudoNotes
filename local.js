@@ -252,6 +252,83 @@
     if (late.length) await pruneEmptyDirs(late);
   }
 
+  /* ---------- .assets / .asset local folder handling ---------- */
+  const localAssetUrls = new Map();
+
+  function getAssetUrl(relPath) {
+    const norm = relPath.replace(/^\.?\//, "");
+    return localAssetUrls.get(norm) || null;
+  }
+
+  async function getAssetFolderHandle(create = false) {
+    try {
+      await ensure();
+    } catch {
+      return null;
+    }
+    const parents = [rootHandle, notesHandle].filter(Boolean);
+    for (const p of parents) {
+      try {
+        const h = await p.getDirectoryHandle(".assets", { create: false });
+        if (h) return { handle: h, folderName: ".assets", parent: p };
+      } catch (_) {}
+      try {
+        const h = await p.getDirectoryHandle(".asset", { create: false });
+        if (h) return { handle: h, folderName: ".asset", parent: p };
+      } catch (_) {}
+    }
+    if (create) {
+      const targetParent = rootHandle || notesHandle;
+      if (!targetParent) return null;
+      const h = await targetParent.getDirectoryHandle(".assets", { create: true });
+      return { handle: h, folderName: ".assets", parent: targetParent };
+    }
+    return null;
+  }
+
+  async function listAssets() {
+    const out = [];
+    const folderInfo = await getAssetFolderHandle(false);
+    if (!folderInfo) return out;
+    const { handle, folderName } = folderInfo;
+    for await (const [name, h] of handle.entries()) {
+      if (h.kind === "file") {
+        try {
+          const file = await h.getFile();
+          const relPath = `${folderName}/${name}`;
+          let url = localAssetUrls.get(relPath);
+          if (!url) {
+            url = URL.createObjectURL(file);
+            localAssetUrls.set(relPath, url);
+          }
+          out.push({
+            name,
+            relPath,
+            path: relPath,
+            size: file.size,
+            url,
+            isStaged: false,
+          });
+        } catch (_) {}
+      }
+    }
+    return out;
+  }
+
+  async function writeAsset(fileName, blob) {
+    const folderInfo = await getAssetFolderHandle(true);
+    if (!folderInfo) throw fail("no-folder", "Local folder is not accessible.");
+    const { handle, folderName } = folderInfo;
+    const fileHandle = await handle.getFileHandle(fileName, { create: true });
+    const w = await fileHandle.createWritable();
+    await w.write(blob);
+    await w.close();
+    const relPath = `${folderName}/${fileName}`;
+    const url = URL.createObjectURL(blob);
+    localAssetUrls.set(relPath, url);
+    return { name: fileName, relPath, url };
+  }
+
   /* Same shape as the GitHub writer: `plan` sees the current file list and returns the changes. */
   async function commit(message, plan) {
     const paths = await listPaths();
@@ -271,6 +348,7 @@
   global.NotesLocal = {
     supported, ensure, pickFolder, reconnect, createNotesFolder, folderName, candidateName,
     listPaths, readText, readRootFile, commit,
+    listAssets, writeAsset, getAssetUrl,
     useStore(s) { store = s; }, // lets tests replace IndexedDB
   };
 })(window);

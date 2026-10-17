@@ -190,8 +190,8 @@
       ta.addEventListener("blur", (e) => {
         // Only commit if this textarea is still the active edit
         if (!ed || ed.ta !== ta) return;
-        // Blur guard: if focus moved to a popover or tool with [data-keep-edit], do not commit!
-        if (e && e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-keep-edit]")) {
+        // Blur guard: if math palette is open, or focus moved to a popover/tool with [data-keep-edit], do not commit!
+        if (document.querySelector(".math-palette") || (e && e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-keep-edit]"))) {
           return;
         }
         commit();
@@ -402,6 +402,23 @@
       blockIndex(wrap) { commit(); return blocks.findIndex((b) => b.wrap === wrap); },
       getActiveTextarea() { return ed ? ed.ta : null; },
       getActiveBlock() { return active; },
+      ensureActiveEdit(initialText = "", caret = null) {
+        if (ed && ed.ta && ed.ta.isConnected) return ed.ta;
+        if (locked) return null;
+        if (active && active.wrap && active.wrap.isConnected) {
+          startEdit(active, active.wrap, false, { caret: caret !== null ? caret : active.body.length });
+          return ed ? ed.ta : null;
+        }
+        if (blocks.length > 0) {
+          const last = blocks[blocks.length - 1];
+          if (last && last.wrap && last.wrap.isConnected) {
+            startEdit(last, last.wrap, false, { caret: caret !== null ? caret : last.body.length });
+            return ed ? ed.ta : null;
+          }
+        }
+        newBlockEdit({ text: initialText, caret: 0 });
+        return ed ? ed.ta : null;
+      },
       moveBlock(i, dir) {
         if (locked) return false;
         commit();

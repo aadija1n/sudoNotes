@@ -44,6 +44,18 @@
     return list.includes(tex);
   }
 
+  let lastActiveTa = null;
+  let lastCaretPos = 0;
+  let updatePalettePreview = null;
+
+  function trackActiveTextarea(ta) {
+    if (!ta || ta.tagName !== "TEXTAREA") return;
+    lastActiveTa = ta;
+    if (typeof ta.selectionStart === "number") {
+      lastCaretPos = ta.selectionStart;
+    }
+  }
+
   /* ---------- 1. Math Context Detection ---------- */
   function contextAt(text, pos) {
     if (!text || pos < 0 || pos > text.length) return { inMath: false };
@@ -125,11 +137,24 @@
   }
 
   function insertCommand(ta, tex, opts = {}) {
+    // If ta is not connected or missing, acquire the active edit textarea
+    if (!ta || !ta.isConnected) {
+      if (lastActiveTa && lastActiveTa.isConnected) {
+        ta = lastActiveTa;
+      } else {
+        const blocks = global.NotesEditor && global.NotesEditor.getBlocks ? global.NotesEditor.getBlocks() : null;
+        if (blocks && typeof blocks.ensureActiveEdit === "function") {
+          ta = blocks.ensureActiveEdit();
+        }
+      }
+    }
     if (!ta || ta.readOnly || ta.disabled) return false;
     recordRecent(tex);
 
-    let s = ta.selectionStart;
-    let e = ta.selectionEnd;
+    let s = typeof ta.selectionStart === "number" ? ta.selectionStart : lastCaretPos;
+    let e = typeof ta.selectionEnd === "number" ? ta.selectionEnd : s;
+    if (s < 0) s = ta.value.length;
+    if (e < s) e = s;
 
     // Automatically remove leading / or standalone slash left over from slash menu trigger or typed /
     const val = ta.value;
@@ -147,40 +172,56 @@
     }
 
     const ctx = contextAt(ta.value, s);
-
     let ins = tex;
-    // Auto-wrap with inline math $...$ if not already inside math (unless asked not to)
+    let newCaret = s + ins.length;
+
     if (!ctx.inMath && opts.wrap !== false) {
-      ins = `$${tex}$`;
-    }
-
-    // Trailing space rule: if ends with a letter and next char is letter
-    const nextChar = ta.value[e] || "";
-    if (/[a-zA-Z]$/.test(ins) && /[a-zA-Z]/.test(nextChar)) {
-      ins += " ";
-    }
-
-    // Caret placement: if tex contains "{}", put caret inside the first "{}"
-    const hole = ins.indexOf("{}");
-    if (hole !== -1) {
-      const selectedText = s !== e ? ta.value.slice(s, e) : "";
-      if (selectedText) {
-        // fill selection into the hole
-        ins = ins.slice(0, hole + 1) + selectedText + ins.slice(hole + 1);
-        replaceText(ta, s, e, ins);
-        const p = s + hole + 1 + selectedText.length;
-        ta.setSelectionRange(p, p);
+      // Auto-wrap with inline math $...$ when outside math
+      const hole = ins.indexOf("{}");
+      if (hole !== -1) {
+        const selectedText = s !== e ? ta.value.slice(s, e) : "";
+        if (selectedText) {
+          ins = `$${ins.slice(0, hole + 1)}${selectedText}${ins.slice(hole + 1)}$`;
+          newCaret = s + 1 + hole + 1 + selectedText.length;
+        } else {
+          ins = `$${ins}$`;
+          newCaret = s + 1 + hole + 1;
+        }
       } else {
-        replaceText(ta, s, e, ins);
-        const p = s + hole + 1;
-        ta.setSelectionRange(p, p);
+        ins = `$${ins}$`;
+        // Position caret right before the closing $ so next click inserts INSIDE math!
+        newCaret = s + 1 + tex.length;
       }
     } else {
-      replaceText(ta, s, e, ins);
-      const p = s + ins.length;
-      ta.setSelectionRange(p, p);
+      // Already inside math: insert directly at cursor position!
+      const nextChar = ta.value[e] || "";
+      if (/[a-zA-Z]$/.test(ins) && /[a-zA-Z]/.test(nextChar)) {
+        ins += " ";
+      }
+      const hole = ins.indexOf("{}");
+      if (hole !== -1) {
+        const selectedText = s !== e ? ta.value.slice(s, e) : "";
+        if (selectedText) {
+          ins = ins.slice(0, hole + 1) + selectedText + ins.slice(hole + 1);
+          newCaret = s + hole + 1 + selectedText.length;
+        } else {
+          newCaret = s + hole + 1;
+        }
+      } else {
+        newCaret = s + ins.length;
+      }
     }
+
+    replaceText(ta, s, e, ins);
+    ta.setSelectionRange(newCaret, newCaret);
+    lastCaretPos = newCaret;
+    lastActiveTa = ta;
+    paletteTargetTa = ta;
     ta.focus();
+
+    if (typeof updatePalettePreview === "function") {
+      updatePalettePreview(ta);
+    }
     return true;
   }
 
@@ -354,6 +395,7 @@
   let paletteTargetTa = null;
 
   function closePalette() {
+    updatePalettePreview = null;
     if (paletteEl) {
       paletteEl.remove();
       paletteEl = null;
@@ -391,14 +433,23 @@
 
   function openPalette(ta) {
     closePalette();
-    paletteTargetTa = ta || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
+    paletteTargetTa = ta || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null) || (lastActiveTa && lastActiveTa.isConnected ? lastActiveTa : null);
+    if (!paletteTargetTa) {
+      const blocks = global.NotesEditor && global.NotesEditor.getBlocks ? global.NotesEditor.getBlocks() : null;
+      if (blocks && typeof blocks.ensureActiveEdit === "function") {
+        paletteTargetTa = blocks.ensureActiveEdit();
+      }
+    }
 
     // If active block contains slash trigger (e.g. "/" or "/sym"), clear the slash immediately
     if (paletteTargetTa) {
+      lastActiveTa = paletteTargetTa;
+      lastCaretPos = typeof paletteTargetTa.selectionStart === "number" ? paletteTargetTa.selectionStart : 0;
       const val = paletteTargetTa.value;
       if (/^\s*\/[\w+-]*\s*$/.test(val)) {
         paletteTargetTa.value = "";
         paletteTargetTa.setSelectionRange(0, 0);
+        lastCaretPos = 0;
         paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
       } else {
         const m = val.match(/\/[\w+-]*\s*$/);
@@ -406,6 +457,7 @@
           const newV = val.slice(0, m.index);
           paletteTargetTa.value = newV;
           paletteTargetTa.setSelectionRange(newV.length, newV.length);
+          lastCaretPos = newV.length;
           paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
         }
       }
@@ -415,13 +467,36 @@
     wrap.className = "math-palette";
     wrap.setAttribute("data-keep-edit", "true");
     wrap.setAttribute("role", "dialog");
-    wrap.setAttribute("aria-label", "Math symbols palette");
+    wrap.setAttribute("aria-label", "Math symbols palette and formula studio");
 
     wrap.innerHTML = `
       <div class="math-palette-titlebar">
-        <span class="math-palette-title">📐 Math Symbols</span>
+        <span class="math-palette-title">📐 Math Symbols & Formula Studio</span>
         <span class="math-palette-drag-hint">⋮⋮ Drag</span>
         <button type="button" class="math-palette-close" title="Close palette (Esc)" aria-label="Close palette">✕</button>
+      </div>
+      <div class="math-palette-designer">
+        <div class="math-designer-header">
+          <span class="math-designer-label">Formula at Cursor</span>
+          <span class="math-designer-target-badge" id="math-target-badge">● Active Cursor Sync</span>
+        </div>
+        <div class="math-designer-preview" id="math-designer-preview">
+          <span class="math-designer-placeholder">Click symbols or quick constructs to author math at cursor</span>
+        </div>
+        <div class="math-quick-constructs">
+          <button type="button" class="math-qc-btn" data-tex="\\frac{}{}" title="Fraction: \\frac{a}{b}">⅟x frac</button>
+          <button type="button" class="math-qc-btn" data-tex="^{}" title="Superscript: x^{n}">xⁿ pow</button>
+          <button type="button" class="math-qc-btn" data-tex="_{}" title="Subscript: x_{i}">xᵢ sub</button>
+          <button type="button" class="math-qc-btn" data-tex="\\sqrt{}" title="Square Root: \\sqrt{x}">√x sqrt</button>
+          <button type="button" class="math-qc-btn" data-tex="\\sum_{i=1}^{n}" title="Summation: \\sum">∑ sum</button>
+          <button type="button" class="math-qc-btn" data-tex="\\int_{a}^{b}" title="Integral: \\int">∫ int</button>
+          <button type="button" class="math-qc-btn" data-tex="\\left( \\right)" title="Parentheses: ( )">( )</button>
+          <button type="button" class="math-qc-btn" data-tex="\\left[ \\right]" title="Brackets: [ ]">[ ]</button>
+          <button type="button" class="math-qc-btn" data-tex="\\pm" title="Plus-minus: \\pm">±</button>
+          <button type="button" class="math-qc-btn" data-tex="\\infty" title="Infinity: \\infty">∞</button>
+          <button type="button" class="math-qc-btn" data-tex="\\approx" title="Approximately: \\approx">≈</button>
+          <button type="button" class="math-qc-btn" data-tex="\\cdot" title="Dot / Multiply: \\cdot">·</button>
+        </div>
       </div>
       <div class="math-palette-head">
         <div class="math-palette-search-wrap">
@@ -443,6 +518,55 @@
     const searchInput = wrap.querySelector(".math-palette-search");
     const clearSearchBtn = wrap.querySelector(".math-palette-clear-search");
     const chips = wrap.querySelectorAll(".math-chip");
+    const designerPreview = wrap.querySelector("#math-designer-preview");
+    const targetBadge = wrap.querySelector("#math-target-badge");
+
+    updatePalettePreview = function (target) {
+      const activeTa = target || paletteTargetTa || lastActiveTa;
+      if (!activeTa || !designerPreview) return;
+      const s = typeof activeTa.selectionStart === "number" ? activeTa.selectionStart : 0;
+      const ctx = contextAt(activeTa.value, s);
+      let previewTex = "";
+      if (ctx.inMath) {
+        previewTex = activeTa.value.slice(ctx.start, ctx.end).trim();
+      } else {
+        const val = activeTa.value;
+        const line = val.slice(Math.max(0, s - 30), Math.min(val.length, s + 30)).trim();
+        previewTex = line;
+      }
+      if (!previewTex) {
+        designerPreview.innerHTML = `<span class="math-designer-placeholder">Click symbols or quick constructs to insert at cursor</span>`;
+        return;
+      }
+      if (global.katex && typeof global.katex.render === "function") {
+        try {
+          global.katex.render(previewTex, designerPreview, {
+            throwOnError: false,
+            displayMode: false,
+            strict: "ignore",
+            output: "html",
+          });
+          return;
+        } catch {}
+      }
+      designerPreview.textContent = previewTex;
+    };
+
+    // Quick construct button clicks
+    wrap.querySelectorAll(".math-qc-btn").forEach((btn) => {
+      btn.addEventListener("mousedown", (e) => e.preventDefault());
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const activeTa = (paletteTargetTa && paletteTargetTa.isConnected) ? paletteTargetTa :
+          (lastActiveTa && lastActiveTa.isConnected) ? lastActiveTa :
+          (global.NotesEditor && global.NotesEditor.getBlocks ? global.NotesEditor.getBlocks().ensureActiveEdit() : null);
+        if (activeTa) {
+          paletteTargetTa = activeTa;
+          insertCommand(activeTa, btn.dataset.tex);
+          activeTa.focus();
+        }
+      });
+    });
 
     let activeGroup = "All";
 
@@ -529,9 +653,13 @@
         b.addEventListener("mousedown", (e) => e.preventDefault());
         b.addEventListener("click", (e) => {
           e.preventDefault();
-          if (paletteTargetTa && paletteTargetTa.isConnected) {
-            insertCommand(paletteTargetTa, sym.tex);
-            paletteTargetTa.focus();
+          const activeTa = (paletteTargetTa && paletteTargetTa.isConnected) ? paletteTargetTa :
+            (lastActiveTa && lastActiveTa.isConnected) ? lastActiveTa :
+            (global.NotesEditor && global.NotesEditor.getBlocks ? global.NotesEditor.getBlocks().ensureActiveEdit() : null);
+          if (activeTa) {
+            paletteTargetTa = activeTa;
+            insertCommand(activeTa, sym.tex);
+            activeTa.focus();
           }
         });
         grid.appendChild(b);
@@ -987,12 +1115,18 @@
     });
   }
 
-  // Delegated capture listener for all editor textareas
-  document.addEventListener("focusin", (e) => {
+  // Delegated capture listener for all editor textareas to track active editing element and caret
+  function handleTextareaInteraction(e) {
     if (e.target && e.target.tagName === "TEXTAREA") {
       attach(e.target);
+      trackActiveTextarea(e.target);
     }
-  }, true);
+  }
+  document.addEventListener("focusin", handleTextareaInteraction, true);
+  document.addEventListener("click", handleTextareaInteraction, true);
+  document.addEventListener("keyup", handleTextareaInteraction, true);
+  document.addEventListener("input", handleTextareaInteraction, true);
+  document.addEventListener("select", handleTextareaInteraction, true);
 
   /* ---------- 10. Register into NotesInsert & NotesShortcuts ---------- */
   function regItems() {
@@ -1023,8 +1157,15 @@
       group: "Math",
       keywords: ["symbols", "greek", "palette", "latex"],
       run: (t) => {
-        const targetTa = (t && t.ta) || (paletteTargetTa && paletteTargetTa.isConnected ? paletteTargetTa : null) || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
+        let targetTa = (t && t.ta) || (paletteTargetTa && paletteTargetTa.isConnected ? paletteTargetTa : null) || (lastActiveTa && lastActiveTa.isConnected ? lastActiveTa : null) || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
+        if (!targetTa) {
+          const blocks = global.NotesEditor && global.NotesEditor.getBlocks ? global.NotesEditor.getBlocks() : null;
+          if (blocks && typeof blocks.ensureActiveEdit === "function") {
+            targetTa = blocks.ensureActiveEdit();
+          }
+        }
         if (targetTa) {
+          trackActiveTextarea(targetTa);
           const val = targetTa.value;
           if (/^\s*\/[\w+-]*\s*$/.test(val)) {
             targetTa.value = "";

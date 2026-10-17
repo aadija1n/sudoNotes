@@ -36,7 +36,9 @@
   function toMap(entries) {
     const m = new Map();
     for (const e of entries) {
-      if (e.type === "blob" && e.path.startsWith(rootPrefix())) m.set(e.path, { path: e.path, mode: e.mode || "100644", type: "blob", sha: e.sha });
+      if (e.type === "blob" && (e.path.startsWith(rootPrefix()) || /^(?:\.assets|\.asset|(?:[^/]+)\/\.assets|(?:[^/]+)\/\.asset)\//i.test(e.path))) {
+        m.set(e.path, { path: e.path, mode: e.mode || "100644", type: "blob", sha: e.sha });
+      }
     }
     return m;
   }
@@ -48,7 +50,7 @@
     for (const c of changes) {
       if (c.sha === null) continue;
       const mode = c.mode || "100644";
-      next.set(c.path, "content" in c ? { path: c.path, mode, type: "blob", content: c.content } : { path: c.path, mode, type: "blob", sha: c.sha });
+      next.set(c.path, "content" in c ? { path: c.path, mode, type: "blob", content: c.content, base64: !!c.base64 } : { path: c.path, mode, type: "blob", sha: c.sha });
     }
     return next;
   }
@@ -67,7 +69,7 @@
     for (const [p, e] of baseMap) if (!finalMap.has(p)) changes.push({ path: p, mode: e.mode, type: "blob", sha: null });
     for (const [p, e] of finalMap) {
       const b = baseMap.get(p);
-      if (e.content !== undefined) changes.push({ path: p, mode: e.mode, type: "blob", content: e.content });
+      if (e.content !== undefined) changes.push({ path: p, mode: e.mode, type: "blob", content: e.content, base64: !!e.base64 });
       else if (!b || b.sha !== e.sha || b.mode !== e.mode) changes.push({ path: p, mode: e.mode, type: "blob", sha: e.sha });
     }
     return changes;

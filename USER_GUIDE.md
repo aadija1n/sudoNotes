@@ -289,20 +289,32 @@ Click `+` or type `/table` to open the visual grid builder:
    - `matrix` — Plain (no brackets)
 4. Fill in cell values in the visual grid with real-time **KaTeX live preview**.
 
-### Visual Mermaid Diagram Studio
-Click `+` or type `/mermaid` to launch the **Interactive Diagram Studio**:
-- **Interactive Flowchart Builder**: Add steps, customize shapes (Rectangle, Decision Diamond, Rounded Box, Circle), set arrow links and decision conditions without writing any Mermaid syntax.
+### Visual Mermaid Diagram Studio & Live Visualizer
+Click `+` or type `/mermaid` to launch the upgraded **Side-by-Side Diagram Studio**:
+- **Spacious Split Canvas**: Interactive controls on the left, full-height Live Render Canvas on the right.
+- **Interactive Flowchart Builder**: Add steps, customize shapes (Rectangle, Decision Diamond, Rounded Box, Circle, Cylinder / Database), and configure arrow labels and connections.
 - **Ready Diagram Starters**: One-click starters for Flowcharts, Sequence Diagrams, Class Diagrams, State Machines, Git Branching Graphs, and Pie Charts.
-- **Live Visual Rendering**: Instant diagram rendering powered by Mermaid directly in the dialog before inserting.
+- **Real-Time Render Controls**:
+  - **Canvas Zoom**: `+`, `−`, and `100%` Reset.
+  - **Theme Switcher**: Switch between **Dark**, **Slate**, **Forest**, and **Paper (Light)** themes for optimal contrast and readability.
+  - **Copy Actions**: 1-click **Copy SVG** and **Copy Code** to clipboard.
 - **In-Block Edit Button**: Any diagram rendered in Write mode features an action strip to reopen the visual studio and edit diagrams in place.
 
-### Image Insertion & Live Resizing
-1. Click `+` or type `/image` to open the Image modal.
-2. Enter the image URL or relative path, alt text, and alignment (Center, Left, Right).
-3. **Interactive Sizing in Write Mode**: Hovering over any rendered image reveals controls:
-   - `−` Decrease width by 10%.
-   - `+` Increase width by 10%.
-   - **Left / Center / Right**: Switch image alignment and text wrapping.
+### Hidden `.assets` Folder & Visual Asset Gallery
+sudoNotes provides seamless support for image assets stored in a hidden `.assets` (or `.asset`) directory:
+1. **Hidden from Navigation**: The `.assets` or `.asset` folder is excluded from the Subject/Chapter notes navigation tree, keeping your sidebar clean.
+2. **Visual Asset Gallery**: Click `+` or choose `/image` to open the Asset Manager:
+   - Browse existing media thumbnails in `.assets/` or `.asset/`.
+   - Filter assets by filename with instant search.
+   - 1-click to select any asset for insertion.
+3. **Drag & Drop Image Upload**:
+   - Drag image files (PNG, JPG, SVG, WebP, GIF) directly onto the upload zone or click **Browse Images**.
+   - Images are automatically saved into your notes' `.assets/` folder.
+   - **Atomic Git Staging**: In GitHub mode, uploaded images are added to the Mode Dock's atomic staging list (as binary blobs) so they are committed together with your notes. In Local mode, they are written to the local folder.
+4. **Direct Markdown Resolution**:
+   - Images in `.assets/sample.png` or `.asset/sample.png` resolve automatically in Markdown (`![alt](.assets/sample.png)`) and HTML (`<img src=".assets/sample.png">`).
+5. **Interactive Sizing in Write Mode**:
+   - Hover over any rendered image in Write mode for live size (`+` / `−`) and alignment (`Left`, `Center`, `Right`) controls.
 
 ### Footnotes
 Type `/footnote` to insert a footnote anchor `[^1]` at your cursor and automatically append the reference definition `[^1]: Footnote text here.` at the bottom of the note.

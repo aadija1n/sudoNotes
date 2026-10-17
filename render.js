@@ -77,6 +77,11 @@
 
   function resolveSrc(src, dir) {
     if (!src || /^([a-z]+:|\/\/|\/|#|data:)/i.test(src)) return src;
+    const clean = src.trim().replace(/^\.?\//, "");
+    if (clean.startsWith(".assets/") || clean.startsWith(".asset/")) {
+      const resolved = global.NotesData && global.NotesData.resolveAssetUrl ? global.NotesData.resolveAssetUrl(src) : null;
+      if (resolved) return resolved;
+    }
     const path = `${dir}/${src}`.split("/").map((seg, i) => (i === 0 ? seg : encodeURI(decodeURI(seg)))).join("/");
     // Phase 5R: notes no longer sit next to the page, so images load from the notes repository
     const abs = global.NotesData && global.NotesData.assetUrl ? global.NotesData.assetUrl(path) : null;
