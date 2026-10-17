@@ -162,7 +162,8 @@
   function showError(el, tex, err) {
     if (el.closest && el.closest(".math-palette")) {
       el.classList.remove("math-pending");
-      el.textContent = tex.replace(/[\\{}]/g, "") || "sym";
+      const found = global.NotesMathData ? global.NotesMathData.find(tex) : null;
+      el.textContent = (found && found.char) || (el.dataset && el.dataset.char) || "";
       el.dataset.done = "1";
       return;
     }

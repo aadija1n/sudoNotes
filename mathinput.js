@@ -131,12 +131,19 @@
     let s = ta.selectionStart;
     let e = ta.selectionEnd;
 
-    // Automatically remove leading / or standalone slash left over from slash menu trigger
-    if (/^\/[\w+-]*$/.test(ta.value.trim())) {
+    // Automatically remove leading / or standalone slash left over from slash menu trigger or typed /
+    const val = ta.value;
+    if (/^\s*\/[\w+-]*\s*$/.test(val)) {
       s = 0;
-      e = ta.value.length;
-    } else if (s === e && s > 0 && ta.value[s - 1] === "/" && (s === 1 || /\s/.test(ta.value[s - 2] || ""))) {
-      s = s - 1;
+      e = val.length;
+    } else {
+      const beforeCaret = val.slice(0, s);
+      const slashMatch = beforeCaret.match(/\/[\w+-]*\s*$/);
+      if (slashMatch) {
+        s = s - slashMatch[0].length;
+      } else if (s === e && s < val.length && val[s] === "/") {
+        e = s + 1;
+      }
     }
 
     const ctx = contextAt(ta.value, s);
@@ -386,11 +393,22 @@
     closePalette();
     paletteTargetTa = ta || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
 
-    // If active block only contains slash trigger (e.g. "/"), clear it immediately
-    if (paletteTargetTa && /^\/[\w+-]*$/.test(paletteTargetTa.value.trim())) {
-      paletteTargetTa.value = "";
-      paletteTargetTa.setSelectionRange(0, 0);
-      paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
+    // If active block contains slash trigger (e.g. "/" or "/sym"), clear the slash immediately
+    if (paletteTargetTa) {
+      const val = paletteTargetTa.value;
+      if (/^\s*\/[\w+-]*\s*$/.test(val)) {
+        paletteTargetTa.value = "";
+        paletteTargetTa.setSelectionRange(0, 0);
+        paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
+      } else {
+        const m = val.match(/\/[\w+-]*\s*$/);
+        if (m) {
+          const newV = val.slice(0, m.index);
+          paletteTargetTa.value = newV;
+          paletteTargetTa.setSelectionRange(newV.length, newV.length);
+          paletteTargetTa.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
     }
 
     const wrap = document.createElement("div");
@@ -403,12 +421,12 @@
       <div class="math-palette-titlebar">
         <span class="math-palette-title">📐 Math Symbols</span>
         <span class="math-palette-drag-hint">⋮⋮ Drag</span>
-        <button type="button" class="math-palette-close" title="Close palette (Esc)">✕</button>
+        <button type="button" class="math-palette-close" title="Close palette (Esc)" aria-label="Close palette">✕</button>
       </div>
       <div class="math-palette-head">
         <div class="math-palette-search-wrap">
-          <input type="search" class="math-palette-search" placeholder="Search ~250 symbols (alpha, sum, infty, le, matrix)…" aria-label="Search symbols" spellcheck="false" autocomplete="off" />
-          <button type="button" class="math-palette-clear-search" style="display:none;" title="Clear search">✕</button>
+          <input type="search" class="math-palette-search" placeholder="Search symbols (alpha, sum, infty, le, matrix)…" aria-label="Search symbols" spellcheck="false" autocomplete="off" />
+          <button type="button" class="math-palette-clear-search" style="display:none;" title="Clear search" aria-label="Clear search">✕</button>
         </div>
       </div>
       <div class="math-palette-chips">
@@ -437,10 +455,10 @@
 
       if (activeGroup === "Recents") {
         const rec = getRecents();
-        symbols = rec.map((t) => global.NotesMathData ? global.NotesMathData.find(t) || { tex: t, name: t, group: "Recents" } : { tex: t, name: t });
+        symbols = rec.map((t) => (global.NotesMathData ? global.NotesMathData.find(t) || { tex: t, name: t, char: t, group: "Recents" } : { tex: t, name: t, char: t }));
       } else if (activeGroup === "Favorites") {
         const fav = getFavorites();
-        symbols = fav.map((t) => global.NotesMathData ? global.NotesMathData.find(t) || { tex: t, name: t, group: "Favorites" } : { tex: t, name: t });
+        symbols = fav.map((t) => (global.NotesMathData ? global.NotesMathData.find(t) || { tex: t, name: t, char: t, group: "Favorites" } : { tex: t, name: t, char: t }));
       } else if (activeGroup !== "All") {
         symbols = symbols.filter((s) => s.group === activeGroup);
       }
@@ -450,7 +468,7 @@
       }
 
       if (!symbols.length) {
-        body.innerHTML = `<p style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No symbols found.</p>`;
+        body.innerHTML = `<p style="padding:28px 16px;text-align:center;color:var(--text-muted);font-size:13px;">No symbols found.</p>`;
         return;
       }
 
@@ -476,17 +494,23 @@
               throwOnError: false,
               displayMode: false,
               strict: "ignore",
+              output: "html",
             });
-            rendered = true;
+            if (preview.querySelector(".katex-error") || preview.textContent.includes("KaTeX parse error")) {
+              preview.replaceChildren();
+              rendered = false;
+            } else {
+              rendered = true;
+            }
           } catch {
             rendered = false;
           }
         }
         if (!rendered) {
-          preview.className = "math-sym-glyph math math-inline";
-          preview.dataset.tex = previewTex;
-          preview.textContent = previewTex;
+          preview.className = "math-sym-glyph";
+          preview.textContent = sym.char || sym.name || "•";
         }
+        preview.dataset.done = "1";
         b.appendChild(preview);
 
         const star = document.createElement("button");
@@ -505,7 +529,7 @@
         b.addEventListener("mousedown", (e) => e.preventDefault());
         b.addEventListener("click", (e) => {
           e.preventDefault();
-          if (paletteTargetTa) {
+          if (paletteTargetTa && paletteTargetTa.isConnected) {
             insertCommand(paletteTargetTa, sym.tex);
             paletteTargetTa.focus();
           }
@@ -514,9 +538,6 @@
       });
 
       body.appendChild(grid);
-      if (global.NotesMath && global.NotesMath.render) {
-        global.NotesMath.render(body);
-      }
     }
 
     searchInput.addEventListener("input", renderGrid);
@@ -544,36 +565,65 @@
       }
     });
 
-    // Smart Positioning: Pinned to top right of screen so note content is completely visible
+    // Smart Adjacent Positioning: Position next to the active block so text remains visible
     const vpW = window.innerWidth, vpH = window.innerHeight;
-    if (vpW >= 960) {
-      wrap.style.top = "72px";
-      wrap.style.right = "24px";
-      wrap.style.left = "auto";
-      wrap.style.bottom = "auto";
-      wrap.style.width = "400px";
-      wrap.style.maxHeight = `${Math.min(580, vpH - 96)}px`;
-    } else if (vpW >= 768) {
-      wrap.style.top = "72px";
-      wrap.style.right = "16px";
-      wrap.style.left = "auto";
-      wrap.style.bottom = "auto";
-      wrap.style.width = "360px";
-      wrap.style.maxHeight = `${Math.min(540, vpH - 88)}px`;
-    } else {
+    if (vpW < 640) {
       wrap.style.bottom = "0";
       wrap.style.left = "0";
       wrap.style.right = "0";
       wrap.style.top = "auto";
       wrap.style.width = "100%";
-      wrap.style.maxHeight = "52vh";
+      wrap.style.maxHeight = "54vh";
       wrap.style.borderRadius = "16px 16px 0 0";
+    } else {
+      const palW = Math.min(410, vpW - 24);
+      const palH = Math.min(540, vpH - 80);
+      wrap.style.width = `${palW}px`;
+      wrap.style.maxHeight = `${palH}px`;
+      wrap.style.bottom = "auto";
+      wrap.style.right = "auto";
+
+      let placed = false;
+      if (paletteTargetTa && paletteTargetTa.isConnected) {
+        const r = paletteTargetTa.getBoundingClientRect();
+        if (r.bottom > 40 && r.top < vpH - 40) {
+          // 1. Try placing to the right of the active block
+          if (vpW - r.right >= palW + 20) {
+            wrap.style.left = `${Math.min(vpW - palW - 12, r.right + 16)}px`;
+            wrap.style.top = `${Math.max(16, Math.min(vpH - palH - 16, r.top - 8))}px`;
+            placed = true;
+          }
+          // 2. Try placing to the left of the active block
+          else if (r.left >= palW + 20) {
+            wrap.style.left = `${Math.max(12, r.left - palW - 16)}px`;
+            wrap.style.top = `${Math.max(16, Math.min(vpH - palH - 16, r.top - 8))}px`;
+            placed = true;
+          }
+          // 3. Try placing below the active block
+          else if (vpH - r.bottom >= Math.min(320, palH)) {
+            wrap.style.top = `${r.bottom + 8}px`;
+            wrap.style.left = `${Math.max(12, Math.min(vpW - palW - 12, r.left))}px`;
+            placed = true;
+          }
+          // 4. Try placing above the active block
+          else if (r.top >= Math.min(320, palH) + 16) {
+            wrap.style.top = `${Math.max(16, r.top - palH - 8)}px`;
+            wrap.style.left = `${Math.max(12, Math.min(vpW - palW - 12, r.left))}px`;
+            placed = true;
+          }
+        }
+      }
+
+      if (!placed) {
+        wrap.style.top = "72px";
+        wrap.style.left = `${Math.max(12, vpW - palW - 24)}px`;
+      }
     }
 
-    // Draggable Titlebar (drag anywhere on screen)
+    // Pointer-based draggable titlebar (works with mouse, pen, touch)
     let isDragging = false, startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
-    titlebar.addEventListener("mousedown", (e) => {
-      if (e.target.closest("button")) return;
+    const onPointerDown = (e) => {
+      if (e.target.closest("button") || e.target.closest("input")) return;
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -584,23 +634,33 @@
       wrap.style.bottom = "auto";
       wrap.style.left = `${initialLeft}px`;
       wrap.style.top = `${initialTop}px`;
+      if (typeof titlebar.setPointerCapture === "function") {
+        try { titlebar.setPointerCapture(e.pointerId); } catch (_) {}
+      }
       document.body.style.userSelect = "none";
-    });
-    window.addEventListener("mousemove", (e) => {
+    };
+    const onPointerMove = (e) => {
       if (!isDragging) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
-      const newL = Math.max(10, Math.min(window.innerWidth - wrap.offsetWidth - 10, initialLeft + dx));
-      const newT = Math.max(10, Math.min(window.innerHeight - wrap.offsetHeight - 10, initialTop + dy));
+      const newL = Math.max(8, Math.min(window.innerWidth - wrap.offsetWidth - 8, initialLeft + dx));
+      const newT = Math.max(8, Math.min(window.innerHeight - wrap.offsetHeight - 8, initialTop + dy));
       wrap.style.left = `${newL}px`;
       wrap.style.top = `${newT}px`;
-    });
-    window.addEventListener("mouseup", () => {
+    };
+    const onPointerUp = (e) => {
       if (isDragging) {
         isDragging = false;
+        if (typeof titlebar.releasePointerCapture === "function") {
+          try { titlebar.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
         document.body.style.userSelect = "";
       }
-    });
+    };
+    titlebar.addEventListener("pointerdown", onPointerDown);
+    titlebar.addEventListener("pointermove", onPointerMove);
+    titlebar.addEventListener("pointerup", onPointerUp);
+    titlebar.addEventListener("pointercancel", onPointerUp);
 
     document.body.appendChild(wrap);
     paletteEl = wrap;
@@ -963,12 +1023,24 @@
       group: "Math",
       keywords: ["symbols", "greek", "palette", "latex"],
       run: (t) => {
-        if (t && t.ta && /^\/[\w+-]*$/.test(t.ta.value.trim())) {
-          t.ta.value = "";
-          t.ta.setSelectionRange(0, 0);
-          t.ta.dispatchEvent(new Event("input", { bubbles: true }));
+        const targetTa = (t && t.ta) || (paletteTargetTa && paletteTargetTa.isConnected ? paletteTargetTa : null) || (document.activeElement && document.activeElement.tagName === "TEXTAREA" ? document.activeElement : null);
+        if (targetTa) {
+          const val = targetTa.value;
+          if (/^\s*\/[\w+-]*\s*$/.test(val)) {
+            targetTa.value = "";
+            targetTa.setSelectionRange(0, 0);
+            targetTa.dispatchEvent(new Event("input", { bubbles: true }));
+          } else {
+            const m = val.match(/\/[\w+-]*\s*$/);
+            if (m) {
+              const newV = val.slice(0, m.index);
+              targetTa.value = newV;
+              targetTa.setSelectionRange(newV.length, newV.length);
+              targetTa.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+          }
         }
-        openPalette(t && t.ta ? t.ta : null);
+        openPalette(targetTa);
       },
     });
 

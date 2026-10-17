@@ -213,7 +213,8 @@
   transform: translateY(-1px);
 }
 .math-sym-glyph {
-  font-size: 16px;
+  font-family: "KaTeX_Main", "KaTeX_Math", var(--font-sans), sans-serif;
+  font-size: 17px;
   line-height: 1;
   pointer-events: none;
   display: flex;
@@ -222,7 +223,10 @@
   max-width: 100%;
 }
 .math-sym-glyph .katex {
-  font-size: 1.05em;
+  font-size: 1.1em;
+}
+.math-palette .katex-mathml {
+  display: none !important;
 }
 .math-sym-btn .star-btn {
   position: absolute;
