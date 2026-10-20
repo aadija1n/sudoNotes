@@ -8,7 +8,7 @@
    - root: the folder in the notes repo that holds all subjects (default "notes"). */
 window.NOTES_CONFIG = {
   owner: "aadija1n",
-  repo: "sample-notes",
+  repo: "study-notes",
   branch: "main",
   root: "notes",
 };
