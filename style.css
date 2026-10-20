@@ -146,7 +146,35 @@ code, pre, kbd {
 }
 .back-link:hover { color: var(--text); }
 
-/* ---------- Subject tiles (auto-wrapping) ---------- */
+/* ---------- Subject tiles (auto-wrapping) & Categories ---------- */
+.category-section {
+  margin-bottom: 32px;
+}
+.category-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.category-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.category-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
 .tiles {
   display: flex;
   flex-wrap: wrap;

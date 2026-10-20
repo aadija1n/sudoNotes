@@ -277,18 +277,35 @@
      changes; `out` collects results the UI needs (new chapter number, renumber map, ...).
      The same builders run in three places: immediately (local mode), against the virtual tree (staging, GitHub mode)
      and again when a pending list is replayed on a newer repository state. Each re-validates against the entries it is given. */
+  const SECTION_RE = /^Section\s+(\d+)\s*-\s*(.+)$/i;
   const CHAPTER_RE = /^Chapter\s+(\d+)\s*-\s*(.+)$/i; // same pattern data.js parses folders with
   const TOPIC_FILE_RE = /^(\d+)\.(\d+)(\s+.+\.md)$/i; // "N.M Title.md" (M and the title text are kept as written)
   const MAX_CHAPTER_NUMBER = 999999;
   const padNum = (n) => String(n).padStart(2, "0"); // 00 ... 99, then 100 (three digits)
   const chapterFolder = (num, name) => `Chapter ${padNum(num)} - ${name}`;
+  const sectionFolder = (num, name) => `Section ${padNum(num)} - ${name}`;
   const gitkeep = (path) => ({ path, mode: "100644", type: "blob", content: "" });
   /* A moved file keeps its blob (sha), or its staged text (content) when it is not in the repository yet. */
   const moved = (e, path) => (e.content !== undefined
     ? { path, mode: e.mode, type: "blob", content: e.content }
     : { path, mode: e.mode, type: "blob", sha: e.sha });
 
-  /* Reads the chapters of one subject from the file list. `exists` = the subject has any file. */
+  function sectionsIn(entries, subject) {
+    const prefix = `${D.root}/${subject}/`;
+    const byFolder = new Map();
+    for (const e of entries) {
+      if (e.type !== "blob" || !e.path.startsWith(prefix)) continue;
+      const rel = e.path.slice(prefix.length).split("/");
+      if (rel.length < 2) continue;
+      const m = rel[0].match(SECTION_RE);
+      if (m && !byFolder.has(rel[0])) {
+        byFolder.set(rel[0], { folder: rel[0], num: parseInt(m[1], 10), name: m[2].trim() });
+      }
+    }
+    return [...byFolder.values()].sort((a, b) => a.num - b.num);
+  }
+
+  /* Reads the chapters of one subject from the file list (both unsectioned and inside sections). */
   function chaptersIn(entries, subject) {
     const prefix = `${D.root}/${subject}/`;
     const byFolder = new Map();
@@ -298,8 +315,18 @@
       exists = true;
       const rel = e.path.slice(prefix.length).split("/");
       if (rel.length < 2) continue;
-      const m = rel[0].match(CHAPTER_RE);
-      if (m && !byFolder.has(rel[0])) byFolder.set(rel[0], { folder: rel[0], num: parseInt(m[1], 10), name: m[2].trim() });
+      // Direct chapter (unsectioned): Chapter XX - Name/...
+      const m1 = rel[0].match(CHAPTER_RE);
+      if (m1 && !byFolder.has(rel[0])) {
+        byFolder.set(rel[0], { folder: rel[0], num: parseInt(m1[1], 10), name: m1[2].trim(), sectionFolder: null });
+      }
+      // Sectioned chapter: Section XX - Name/Chapter XX - Name/...
+      if (rel.length >= 3 && rel[0].match(SECTION_RE)) {
+        const m2 = rel[1].match(CHAPTER_RE);
+        if (m2 && !byFolder.has(rel[1])) {
+          byFolder.set(rel[1], { folder: rel[1], num: parseInt(m2[1], 10), name: m2[2].trim(), sectionFolder: rel[0] });
+        }
+      }
     }
     return { exists, chapters: [...byFolder.values()] };
   }
@@ -343,9 +370,10 @@
      inside becomes "<new>.M Title.md". Other files (.gitkeep, images, subfolders) move unchanged.
      Returns the removals and the additions separately so callers can put all removals first. */
   function renumberChapter(entries, subject, chapter, newNum) {
-    const from = `${D.root}/${subject}/${chapter.folder}/`;
+    const secPrefix = chapter.sectionFolder ? `${chapter.sectionFolder}/` : "";
+    const from = `${D.root}/${subject}/${secPrefix}${chapter.folder}/`;
     const newFolder = chapterFolder(newNum, chapter.name);
-    const to = `${D.root}/${subject}/${newFolder}/`;
+    const to = `${D.root}/${subject}/${secPrefix}${newFolder}/`;
     const targets = new Set();
     const removals = [];
     const adds = [];
@@ -368,7 +396,11 @@
   const TOPIC_PARSE_RE = /^(\d+)\.(\d+)(\s+(.+)\.md)$/i; // [2] index, [3] " Title.md" (kept as written), [4] title
 
   function topicsIn(entries, subject, folder) {
-    const dir = `${D.root}/${subject}/${folder}`;
+    const chInfo = chaptersIn(entries, subject);
+    const ch = chInfo.chapters.find((c) => c.folder === folder);
+    const dir = ch && ch.sectionFolder
+      ? `${D.root}/${subject}/${ch.sectionFolder}/${folder}`
+      : `${D.root}/${subject}/${folder}`;
     const topics = [];
     for (const e of entries) {
       if (e.type !== "blob" || !e.path.startsWith(`${dir}/`)) continue;
@@ -460,9 +492,52 @@
       },
     },
 
-    /* Number 00 if the subject has no chapters, else highest + 1. */
+    /* ---------- sections ---------- */
+    addSection: {
+      label: (a) => `Add section: ${cleanName(a.name)} (${a.subject})`,
+      plan(entries, a, out) {
+        const name = cleanName(a.name);
+        const err = validateName(name, null, "section");
+        if (err) throw fail("invalid", err);
+        const sections = sectionsIn(entries, a.subject);
+        const num = sections.length ? Math.max(...sections.map((s) => s.num)) + 1 : 1;
+        out.num = num;
+        out.folder = sectionFolder(num, name);
+        return [gitkeep(`${D.root}/${a.subject}/${out.folder}/.gitkeep`)];
+      },
+    },
+
+    renameSection: {
+      label: (a) => `Rename section: ${a.folder} → ${cleanName(a.name)}`,
+      plan(entries, a, out) {
+        const name = cleanName(a.name);
+        const err = validateName(name, null, "section");
+        if (err) throw fail("invalid", err);
+        const m = a.folder.match(SECTION_RE);
+        const num = m ? parseInt(m[1], 10) : 1;
+        const newFolder = sectionFolder(num, name);
+        if (newFolder === a.folder) throw fail("invalid", "That is already the name of this section.");
+        const from = `${D.root}/${a.subject}/${a.folder}/`;
+        const to = `${D.root}/${a.subject}/${newFolder}/`;
+        out.num = num;
+        out.folder = newFolder;
+        const changes = blobsUnder(entries, from.slice(0, -1)).flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
+        return keepSubjectAlive(entries, a.subject, changes);
+      },
+    },
+
+    deleteSection: {
+      label: (a) => `Delete section: ${a.folder} (${a.subject})`,
+      plan(entries, a, out) {
+        const removals = blobsUnder(entries, `${D.root}/${a.subject}/${a.folder}`).map(removal);
+        out.removed = a.folder;
+        return keepSubjectAlive(entries, a.subject, removals);
+      },
+    },
+
+    /* Number 00 if the subject has no chapters, else highest + 1. Supports optional sectionFolder */
     addChapter: {
-      label: (a) => `Add chapter: ${cleanName(a.name)} (${a.subject})`,
+      label: (a) => `Add chapter: ${cleanName(a.name)} (${a.subject}${a.sectionFolder ? ` / ${a.sectionFolder}` : ""})`,
       plan(entries, a, out) {
         const name = cleanName(a.name);
         const err = validateName(name, null, "chapter");
@@ -472,8 +547,11 @@
         const num = chapters.length ? Math.max(...chapters.map((c) => c.num)) + 1 : 0;
         out.num = num;
         out.folder = chapterFolder(num, name);
-        // git cannot store empty folders, so a .gitkeep file holds the chapter open
-        return [gitkeep(`${D.root}/${a.subject}/${out.folder}/.gitkeep`)];
+        out.sectionFolder = a.sectionFolder || null;
+        const targetPath = a.sectionFolder
+          ? `${D.root}/${a.subject}/${a.sectionFolder}/${out.folder}/.gitkeep`
+          : `${D.root}/${a.subject}/${out.folder}/.gitkeep`;
+        return [gitkeep(targetPath)];
       },
     },
 
@@ -490,10 +568,12 @@
         if (chapters.some((c) => c.folder !== a.folder && c.folder.toLowerCase() === newFolder.toLowerCase())) {
           throw fail("invalid", "Another chapter folder already has that name and number.");
         }
-        const from = `${D.root}/${a.subject}/${a.folder}/`;
-        const to = `${D.root}/${a.subject}/${newFolder}/`;
+        const secPrefix = chapter.sectionFolder ? `${chapter.sectionFolder}/` : "";
+        const from = `${D.root}/${a.subject}/${secPrefix}${a.folder}/`;
+        const to = `${D.root}/${a.subject}/${secPrefix}${newFolder}/`;
         out.num = chapter.num;
         out.folder = newFolder;
+        out.sectionFolder = chapter.sectionFolder;
         const changes = blobsUnder(entries, from.slice(0, -1)).flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
         return keepSubjectAlive(entries, a.subject, changes);
       },
@@ -529,7 +609,8 @@
       plan(entries, a, out) {
         const { chapter, chapters } = findChapter(entries, a.subject, a.folder);
         assertNoDuplicates(chapters);
-        const removals = blobsUnder(entries, `${D.root}/${a.subject}/${a.folder}`).map(removal);
+        const secPrefix = chapter.sectionFolder ? `${chapter.sectionFolder}/` : "";
+        const removals = blobsUnder(entries, `${D.root}/${a.subject}/${secPrefix}${a.folder}`).map(removal);
         const higher = chapters.filter((c) => c.num > chapter.num).sort((x, y) => x.num - y.num);
         const gone = [];
         const adds = [];

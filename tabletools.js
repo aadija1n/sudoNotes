@@ -397,37 +397,71 @@
     if (!root) return;
     root.querySelectorAll(".blk").forEach((blkWrap) => {
       const table = blkWrap.querySelector("table");
-      if (!table || blkWrap.querySelector(".table-action-strip")) return;
+      if (!table || table.closest(".table-cell-wrap")) return;
 
-      const strip = document.createElement("div");
-      strip.className = "table-action-strip w-only";
-      strip.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 6px;
-        padding: 4px 8px;
-        background: #15151a;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        width: fit-content;
-        font-size: 12px;
+      const wrap = document.createElement("div");
+      wrap.className = "cell-action-wrap table-cell-wrap";
+      table.parentNode.insertBefore(wrap, table);
+      wrap.appendChild(table);
+
+      // Upper right corner 3-dot button
+      const dotsBtn = document.createElement("button");
+      dotsBtn.type = "button";
+      dotsBtn.className = "cell-dots-btn w-only";
+      dotsBtn.innerHTML = "&#8942;";
+      dotsBtn.title = "Table options";
+      dotsBtn.setAttribute("aria-label", "Table options");
+
+      // Popover menu
+      const popover = document.createElement("div");
+      popover.className = "cell-popover-menu w-only";
+      popover.style.display = "none";
+      popover.innerHTML = `
+        <button type="button" data-act="visual"><span style="margin-right:6px">✏️</span>Visual Editor</button>
+        <button type="button" data-act="add-row"><span style="margin-right:6px">➕</span>Insert Row Below</button>
+        <button type="button" data-act="del-row"><span style="margin-right:6px">➖</span>Delete Last Row</button>
+        <button type="button" data-act="add-col"><span style="margin-right:6px">➕</span>Insert Column Right</button>
+        <button type="button" data-act="del-col"><span style="margin-right:6px">➖</span>Delete Last Column</button>
       `;
 
-      strip.innerHTML = `
-        <span style="font-weight:600;color:var(--accent);margin-right:4px;">📊 Table:</span>
-        <button type="button" class="btn" data-act="visual" style="padding:2px 8px;font-size:12px;">Visual Editor</button>
-        <button type="button" class="btn" data-act="add-row" style="padding:2px 8px;font-size:12px;">+ Row</button>
-        <button type="button" class="btn" data-act="add-col" style="padding:2px 8px;font-size:12px;">+ Col</button>
-      `;
+      wrap.appendChild(dotsBtn);
+      wrap.appendChild(popover);
 
-      strip.addEventListener("click", (e) => {
+      const closeMenu = () => {
+        popover.style.display = "none";
+        dotsBtn.classList.remove("active");
+      };
+
+      dotsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isOpen = popover.style.display === "flex";
+        if (isOpen) {
+          closeMenu();
+        } else {
+          popover.style.display = "flex";
+          dotsBtn.classList.add("active");
+        }
+      });
+
+      // Auto-dismiss: when leaving the cell, the editing menu NEVER persists!
+      wrap.addEventListener("mouseleave", () => {
+        closeMenu();
+      });
+      wrap.addEventListener("focusout", (e) => {
+        if (!wrap.contains(e.relatedTarget)) {
+          closeMenu();
+        }
+      });
+
+      popover.addEventListener("click", (e) => {
         const btn = e.target.closest("button[data-act]");
         if (!btn) return;
         e.stopPropagation();
         e.preventDefault();
-
         const act = btn.dataset.act;
+        closeMenu();
+
         const currentText = getBlockText(blkWrap);
         let parsed = parseTable(currentText);
         if (!parsed) return;
@@ -439,15 +473,25 @@
         } else if (act === "add-row") {
           parsed.rows.push(Array.from({ length: parsed.headers.length }, () => ""));
           updateBlockText(blkWrap, formatTable(parsed));
+        } else if (act === "del-row") {
+          if (parsed.rows.length > 0) {
+            parsed.rows.pop();
+            updateBlockText(blkWrap, formatTable(parsed));
+          }
         } else if (act === "add-col") {
           parsed.headers.push(`Header ${parsed.headers.length + 1}`);
           parsed.align.push("left");
           parsed.rows.forEach((r) => r.push(""));
           updateBlockText(blkWrap, formatTable(parsed));
+        } else if (act === "del-col") {
+          if (parsed.headers.length > 1) {
+            parsed.headers.pop();
+            parsed.align.pop();
+            parsed.rows.forEach((r) => r.pop());
+            updateBlockText(blkWrap, formatTable(parsed));
+          }
         }
       });
-
-      table.parentNode.insertBefore(strip, table);
     });
   }
 

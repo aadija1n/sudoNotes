@@ -355,44 +355,97 @@
     const imgs = root.querySelectorAll(".md img:not([data-img-ctrl])");
     imgs.forEach((img) => {
       img.dataset.imgCtrl = "1";
-      const bar = document.createElement("div");
-      bar.className = "img-ctrl-bar w-only";
-      bar.innerHTML = `
-        <button type="button" class="img-btn" data-act="zoom-out" title="Decrease size">−</button>
-        <button type="button" class="img-btn" data-act="zoom-in" title="Increase size">+</button>
-        <button type="button" class="img-btn" data-act="align-left" title="Align Left">Left</button>
-        <button type="button" class="img-btn" data-act="align-center" title="Align Center">Center</button>
-        <button type="button" class="img-btn" data-act="align-right" title="Align Right">Right</button>
+      if (img.closest(".image-cell-wrap")) return;
+
+      const wrap = document.createElement("div");
+      wrap.className = "cell-action-wrap image-cell-wrap";
+      wrap.style.cssText = "position:relative;display:inline-block;max-width:100%;";
+      img.parentNode.insertBefore(wrap, img);
+      wrap.appendChild(img);
+
+      const dotsBtn = document.createElement("button");
+      dotsBtn.type = "button";
+      dotsBtn.className = "cell-dots-btn w-only";
+      dotsBtn.innerHTML = "&#8942;";
+      dotsBtn.title = "Image options";
+      dotsBtn.setAttribute("aria-label", "Image options");
+
+      const popover = document.createElement("div");
+      popover.className = "cell-popover-menu w-only";
+      popover.style.display = "none";
+      popover.innerHTML = `
+        <button type="button" data-act="zoom-in"><span style="margin-right:6px">➕</span>Zoom In (+10%)</button>
+        <button type="button" data-act="zoom-out"><span style="margin-right:6px">➖</span>Zoom Out (-10%)</button>
+        <button type="button" data-act="align-left"><span style="margin-right:6px">⬅</span>Align Left</button>
+        <button type="button" data-act="align-center"><span style="margin-right:6px">⏺</span>Align Center</button>
+        <button type="button" data-act="align-right"><span style="margin-right:6px">➡</span>Align Right</button>
       `;
 
-      bar.addEventListener("click", (e) => {
+      wrap.appendChild(dotsBtn);
+      wrap.appendChild(popover);
+
+      const closeMenu = () => {
+        popover.style.display = "none";
+        dotsBtn.classList.remove("active");
+      };
+
+      dotsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isOpen = popover.style.display === "flex";
+        if (isOpen) {
+          closeMenu();
+        } else {
+          popover.style.display = "flex";
+          dotsBtn.classList.add("active");
+        }
+      });
+
+      wrap.addEventListener("mouseleave", () => {
+        closeMenu();
+      });
+      wrap.addEventListener("focusout", (e) => {
+        if (!wrap.contains(e.relatedTarget)) {
+          closeMenu();
+        }
+      });
+
+      popover.addEventListener("click", (e) => {
         const btn = e.target.closest("button[data-act]");
         if (!btn) return;
+        e.stopPropagation();
+        e.preventDefault();
         const act = btn.dataset.act;
-        const currentWidth = img.style.width ? parseInt(img.style.width, 10) : 100;
+        closeMenu();
 
+        const currentWidth = img.style.width ? parseInt(img.style.width, 10) : 100;
         if (act === "zoom-in") {
           img.style.width = `${Math.min(100, currentWidth + 10)}%`;
         } else if (act === "zoom-out") {
           img.style.width = `${Math.max(20, currentWidth - 10)}%`;
         } else if (act === "align-left") {
+          wrap.style.display = "inline-block";
+          wrap.style.margin = "0 1em 1em 0";
+          wrap.style.float = "left";
           img.style.display = "inline";
-          img.style.margin = "0 1em 1em 0";
-          img.style.float = "left";
+          img.style.margin = "0";
+          img.style.float = "none";
         } else if (act === "align-center") {
+          wrap.style.display = "block";
+          wrap.style.margin = "1em auto";
+          wrap.style.float = "none";
           img.style.display = "block";
-          img.style.margin = "1em auto";
+          img.style.margin = "0 auto";
           img.style.float = "none";
         } else if (act === "align-right") {
+          wrap.style.display = "inline-block";
+          wrap.style.margin = "0 0 1em 1em";
+          wrap.style.float = "right";
           img.style.display = "inline";
-          img.style.margin = "0 0 1em 1em";
-          img.style.float = "right";
+          img.style.margin = "0";
+          img.style.float = "none";
         }
       });
-
-      if (img.parentNode) {
-        img.parentNode.insertBefore(bar, img.nextSibling);
-      }
     });
   }
 

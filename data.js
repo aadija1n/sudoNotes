@@ -16,8 +16,38 @@
   const TREE_TTL_MS = 60 * 1000;
   const DEFAULT_ROOT = "notes";
 
+  const SECTION_RE = /^Section\s+(\d+)\s*-\s*(.+)$/i;
   const CHAPTER_RE = /^Chapter\s+(\d+)\s*-\s*(.+)$/i;
   const TOPIC_RE = /^(\d+)\.(\d+)\s+(.+)\.md$/i;
+
+  const CATEGORIES_KEY = "sudoNotes:subject_categories";
+  function getSubjectCategory(subjectName) {
+    try {
+      const map = JSON.parse(localStorage.getItem(CATEGORIES_KEY) || "{}");
+      return map[subjectName] || "";
+    } catch {
+      return "";
+    }
+  }
+  function setSubjectCategory(subjectName, category) {
+    try {
+      const map = JSON.parse(localStorage.getItem(CATEGORIES_KEY) || "{}");
+      if (category && category.trim()) {
+        map[subjectName] = category.trim();
+      } else {
+        delete map[subjectName];
+      }
+      localStorage.setItem(CATEGORIES_KEY, JSON.stringify(map));
+    } catch { /* ignore */ }
+  }
+  function listCategories() {
+    try {
+      const map = JSON.parse(localStorage.getItem(CATEGORIES_KEY) || "{}");
+      return [...new Set(Object.values(map))].filter(Boolean).sort();
+    } catch {
+      return [];
+    }
+  }
 
   function fail(code, message) {
     const e = new Error(message);
@@ -187,41 +217,122 @@ ${mode}};
     for (const p of paths) {
       const parts = p.slice(rootDir.length + 1).split("/");
       if (parts.length < 2) continue; // a loose file directly in the root
-      const [subjName, chapDir, file] = parts;
+      const subjName = parts[0];
       if (subjName === ".assets" || subjName === ".asset") continue; // assets folder is never a subject
 
       let subj = subjects.get(subjName);
-      if (!subj) subjects.set(subjName, (subj = { name: subjName, chapters: new Map() }));
-      if (parts.length !== 3) continue; // only Subject/Chapter/Topic is used
+      if (!subj) {
+        subjects.set(subjName, (subj = {
+          name: subjName,
+          sections: new Map(), // secNum -> { num, name, folder, chapters: new Map() }
+          chapters: new Map(), // chapNum -> { num, name, folder, sectionFolder, topics: [], dups: [] }
+        }));
+      }
 
-      const cm = chapDir.match(CHAPTER_RE);
-      if (!cm) continue;
-      const num = parseInt(cm[1], 10);
-      let ch = subj.chapters.get(num);
-      if (!ch) subj.chapters.set(num, (ch = { num, name: cm[2].trim(), folder: chapDir, topics: [], dups: [] }));
-      else if (ch.folder !== chapDir && !ch.dups.includes(chapDir)) ch.dups.push(chapDir); // two folders, one number (Phase 7 warning)
+      // 1) Direct Chapter (unsectioned): Subject/Chapter XX - Name/1.1 Topic.md
+      // OR empty section placeholder: Subject/Section XX - Name/.gitkeep
+      if (parts.length === 3) {
+        const [_, dir2, file] = parts;
+        const sm = dir2.match(SECTION_RE);
+        if (sm) {
+          const secNum = parseInt(sm[1], 10);
+          if (!subj.sections.has(secNum)) {
+            subj.sections.set(secNum, { num: secNum, name: sm[2].trim(), folder: dir2, chapters: new Map() });
+          }
+          continue;
+        }
 
-      const tm = file.match(TOPIC_RE);
-      if (!tm) continue;
-      const idx = parseInt(tm[2], 10);
-      ch.topics.push({ id: `${num}.${idx}`, num, idx, title: tm[3].trim(), path: p });
+        const cm = dir2.match(CHAPTER_RE);
+        if (!cm) continue;
+        const num = parseInt(cm[1], 10);
+        let ch = subj.chapters.get(num);
+        if (!ch) {
+          subj.chapters.set(num, (ch = { num, name: cm[2].trim(), folder: dir2, sectionFolder: null, topics: [], dups: [] }));
+        } else if (ch.folder !== dir2 && !ch.dups.includes(dir2)) {
+          ch.dups.push(dir2);
+        }
+
+        if (file === ".gitkeep") continue;
+        const tm = file.match(TOPIC_RE);
+        if (!tm) continue;
+        const idx = parseInt(tm[2], 10);
+        ch.topics.push({ id: `${num}.${idx}`, num, idx, title: tm[3].trim(), path: p, sectionFolder: null });
+        continue;
+      }
+
+      // 2) Sectioned Chapter: Subject/Section XX - Name/Chapter XX - Name/1.1 Topic.md
+      if (parts.length === 4) {
+        const [_, secDir, chapDir, file] = parts;
+        const sm = secDir.match(SECTION_RE);
+        if (!sm) continue;
+        const secNum = parseInt(sm[1], 10);
+        let sec = subj.sections.get(secNum);
+        if (!sec) {
+          subj.sections.set(secNum, (sec = { num: secNum, name: sm[2].trim(), folder: secDir, chapters: new Map() }));
+        }
+
+        const cm = chapDir.match(CHAPTER_RE);
+        if (!cm) continue;
+        const num = parseInt(cm[1], 10);
+
+        let secCh = sec.chapters.get(num);
+        if (!secCh) {
+          sec.chapters.set(num, (secCh = { num, name: cm[2].trim(), folder: chapDir, sectionFolder: secDir, sectionNum: secNum, sectionName: sec.name, topics: [], dups: [] }));
+        } else if (secCh.folder !== chapDir && !secCh.dups.includes(chapDir)) {
+          secCh.dups.push(chapDir);
+        }
+
+        let ch = subj.chapters.get(num);
+        if (!ch) {
+          subj.chapters.set(num, secCh);
+        } else if (ch !== secCh) {
+          if (!ch.dups.includes(chapDir)) ch.dups.push(chapDir);
+        }
+
+        if (file === ".gitkeep") continue;
+        const tm = file.match(TOPIC_RE);
+        if (!tm) continue;
+        const idx = parseInt(tm[2], 10);
+        secCh.topics.push({ id: `${num}.${idx}`, num, idx, title: tm[3].trim(), path: p, sectionFolder: secDir });
+        continue;
+      }
     }
+
+    const enrichChapter = (c) => {
+      const topics = c.topics.sort((a, b) => a.idx - b.idx);
+      const seen = new Set();
+      const topicDups = [];
+      for (const t of topics) { if (seen.has(t.idx) && !topicDups.includes(t.idx)) topicDups.push(t.idx); seen.add(t.idx); }
+      return { ...c, topics, topicDups };
+    };
 
     return {
       subjects: [...subjects.values()]
-        .map((s) => ({
-          name: s.name,
-          chapters: [...s.chapters.values()]
+        .map((s) => {
+          const hasSections = s.sections.size > 0;
+          const sections = [...s.sections.values()]
             .sort((a, b) => a.num - b.num)
-            .map((c) => {
-              const topics = c.topics.sort((a, b) => a.idx - b.idx);
-              // Phase 8B: topic indexes that more than one file uses (for example "1.2 A.md" and "1.2 B.md")
-              const seen = new Set();
-              const topicDups = [];
-              for (const t of topics) { if (seen.has(t.idx) && !topicDups.includes(t.idx)) topicDups.push(t.idx); seen.add(t.idx); }
-              return { ...c, topics, topicDups };
-            }),
-        }))
+            .map((sec) => ({
+              num: sec.num,
+              name: sec.name,
+              folder: sec.folder,
+              chapters: [...sec.chapters.values()].sort((a, b) => a.num - b.num).map(enrichChapter),
+            }));
+
+          const allChapters = [...s.chapters.values()]
+            .sort((a, b) => a.num - b.num)
+            .map(enrichChapter);
+
+          const category = getSubjectCategory(s.name) || "";
+
+          return {
+            name: s.name,
+            category,
+            hasSections,
+            sections,
+            chapters: allChapters,
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     };
   }
@@ -450,6 +561,7 @@ ${mode}};
     loadData, resetData, loadNote, parseTree, refresh, source, sourceInfo,
     notesRepo, appRepo, isConfigured, setNotesRepo, configText, assetUrl, setOverlay,
     listAssets, registerInMemoryAsset, resolveAssetUrl, getPreferredAssetFolder,
+    getSubjectCategory, setSubjectCategory, listCategories,
     get root() { return active.root; },
     setTokenProvider(fn) { tokenProvider = fn; },
   };

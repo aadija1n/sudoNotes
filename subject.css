@@ -244,6 +244,92 @@ body.subject-view #app {
 }
 .add-bar button:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
 
+/* ---------- Sections in Subject Sidebar ---------- */
+.section-block {
+  margin-bottom: 12px;
+}
+.section-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.section-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.section-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-align: left;
+  cursor: pointer;
+}
+.section-btn span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section-block.open .section-btn .chev {
+  transform: rotate(90deg);
+}
+.section-chapters {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s var(--ease);
+}
+.section-block.open .section-chapters {
+  grid-template-rows: 1fr;
+}
+.section-chapters-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding-left: 8px;
+  border-left: 2px solid rgba(138, 180, 255, 0.18);
+  margin: 4px 0 6px 12px;
+}
+.sidebar-add-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+.sidebar-add-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sidebar-add-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
+
 /* ---------- Dropdown menu ---------- */
 .menu {
   position: fixed;

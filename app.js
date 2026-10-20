@@ -4,9 +4,32 @@
 
 /* Menu items: [label, phase in which it becomes functional, optional style] */
 const MENUS = {
-  subject: [["Insert new chapter", 0, "", "chapter:add"], ["Rename subject", 0, "", "subject:rename"], ["Delete subject", 0, "danger", "subject:delete"]],
-  chapter: [["Add topic", 0, "", "topic:add"], ["Rename chapter", 0, "", "chapter:rename"], ["Change chapter number", 0, "", "chapter:number"], ["Move up", 0, "", "chapter:up"], ["Move down", 0, "", "chapter:down"], ["Delete chapter", 0, "danger", "chapter:delete"]],
-  topic: [["Rename", 0, "", "topic:rename"], ["Move up", 0, "", "topic:up"], ["Move down", 0, "", "topic:down"], ["Delete", 0, "danger", "topic:delete"]],
+  subject: [
+    ["Insert new section", 0, "", "section:add"],
+    ["Insert new chapter", 0, "", "chapter:add"],
+    ["Set category", 0, "", "subject:category"],
+    ["Rename subject", 0, "", "subject:rename"],
+    ["Delete subject", 0, "danger", "subject:delete"],
+  ],
+  section: [
+    ["Add chapter to this section", 0, "", "section:add-chapter"],
+    ["Rename section", 0, "", "section:rename"],
+    ["Delete section", 0, "danger", "section:delete"],
+  ],
+  chapter: [
+    ["Add topic", 0, "", "topic:add"],
+    ["Rename chapter", 0, "", "chapter:rename"],
+    ["Change chapter number", 0, "", "chapter:number"],
+    ["Move up", 0, "", "chapter:up"],
+    ["Move down", 0, "", "chapter:down"],
+    ["Delete chapter", 0, "danger", "chapter:delete"],
+  ],
+  topic: [
+    ["Rename", 0, "", "topic:rename"],
+    ["Move up", 0, "", "topic:up"],
+    ["Move down", 0, "", "topic:down"],
+    ["Delete", 0, "danger", "topic:delete"],
+  ],
 };
 
 const app = document.getElementById("app");
@@ -114,6 +137,10 @@ function openMenu(btn, type) {
   menuEl.dataset.owner = btn.dataset.uid;
   const chapterEl = btn.closest(".chapter");
   menuEl.dataset.folder = chapterEl ? chapterEl.dataset.folder || "" : "";
+  if (type === "section") {
+    const secEl = btn.closest(".section-block");
+    menuEl.dataset.folder = btn.dataset.secFolder || (secEl ? secEl.dataset.secFolder : "") || "";
+  }
   const topicLink = type === "topic" ? btn.closest("li").querySelector(".topic") : null;
   menuEl.dataset.file = topicLink ? topicLink.dataset.file || "" : "";
   menuEl.setAttribute("role", "menu");
@@ -274,9 +301,40 @@ function renderHome() {
   const nr = NotesData.notesRepo();
   const repoLabel = nr ? `${nr.owner}/${nr.repo}` : "";
 
-  const tiles = DATA.subjects.map((s, i) => {
-    const cls = s.name === last ? "tile last-opened" : "tile";
-    return `<a class="${cls}" style="animation-delay:${Math.min(i, 12) * 50}ms" href="#/subject/${encodeURIComponent(s.name)}">${esc(s.name)}</a>`;
+  // Group subjects by category
+  const groups = new Map();
+  for (const s of DATA.subjects) {
+    const cat = (s.category && s.category.trim()) || "Uncategorized";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(s);
+  }
+
+  // Sort categories: named categories alphabetically first, "Uncategorized" at the end if there are named categories
+  const sortedCats = [...groups.keys()].sort((a, b) => {
+    if (a === "Uncategorized") return 1;
+    if (b === "Uncategorized") return -1;
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
+
+  const categoriesHtml = sortedCats.map((catName) => {
+    const list = groups.get(catName);
+    const tilesHtml = list.map((s, i) => {
+      const cls = s.name === last ? "tile last-opened" : "tile";
+      return `<a class="${cls}" style="animation-delay:${Math.min(i, 12) * 50}ms" href="#/subject/${encodeURIComponent(s.name)}">${esc(s.name)}</a>`;
+    }).join("");
+
+    return `
+      <div class="category-section">
+        <div class="category-header">
+          <h2 class="category-title">
+            <span>${catName === "Uncategorized" ? "📁" : "🏷️"}</span>
+            <span>${esc(catName)}</span>
+          </h2>
+          <span class="category-count">${list.length} ${list.length === 1 ? "subject" : "subjects"}</span>
+        </div>
+        <div class="tiles">${tilesHtml}</div>
+      </div>
+    `;
   }).join("");
 
   const empty = `
@@ -295,8 +353,7 @@ function renderHome() {
         <button class="icon-btn w-only" id="add-subject" aria-label="Add subject" title="Add subject">+</button>
       </div>
     </header>
-    <section class="tiles">${tiles}</section>
-    ${DATA.subjects.length ? "" : empty}
+    ${DATA.subjects.length ? categoriesHtml : empty}
     ${NotesData.source() === "local"
       ? `<p class="source-note">Working offline in the folder <b>${esc(NotesLocal.folderName())}</b>. <button class="link-btn" data-local="pick">Change folder</button></p>`
       : NotesData.sourceInfo().viewOnly
@@ -315,8 +372,8 @@ function buildSubject(found) {
   const name = found.name;
   const enc = encodeURIComponent(name);
 
-  const chapters = found.chapters.map((ch) => `
-    <div class="chapter" data-ch="${ch.num}" data-folder="${esc(ch.folder)}">
+  const renderChapterItem = (ch) => `
+    <div class="chapter" data-ch="${ch.num}" data-folder="${esc(ch.folder)}" data-sec="${esc(ch.sectionFolder || "")}">
       <div class="chapter-row">
         <button class="chapter-btn" aria-expanded="false">
           <span class="chev">›</span><span>Chapter ${pad(ch.num)} - ${esc(ch.name)}</span>
@@ -329,7 +386,33 @@ function buildSubject(found) {
             <button class="dots w-only" data-menu="topic" aria-label="Topic options">⋯</button></li>`).join("")
           : `<li class="empty-note" style="padding:6px 10px;font-size:13px">No topics yet</li>`}
       </ul></div></div>
-    </div>`).join("");
+    </div>`;
+
+  let navChapters = "";
+  if (found.hasSections && found.sections && found.sections.length) {
+    navChapters = found.sections.map((sec) => `
+      <div class="section-block open" data-sec-num="${sec.num}" data-sec-folder="${esc(sec.folder)}">
+        <div class="section-row">
+          <button class="section-btn" aria-expanded="true">
+            <span class="chev">›</span><span>Section ${pad(sec.num)} - ${esc(sec.name)}</span>
+          </button>
+          <button class="dots w-only" data-menu="section" data-sec-folder="${esc(sec.folder)}" aria-label="Section options">⋯</button>
+        </div>
+        <div class="section-chapters">
+          <div class="section-chapters-inner">
+            ${sec.chapters.length ? sec.chapters.map(renderChapterItem).join("") : `<p class="empty-note" style="padding:6px 8px;font-size:12.5px;">No chapters in this section yet</p>`}
+          </div>
+        </div>
+      </div>
+    `).join("");
+
+    const loose = found.chapters.filter((c) => !c.sectionFolder);
+    if (loose.length) {
+      navChapters += `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);">${loose.map(renderChapterItem).join("")}</div>`;
+    }
+  } else {
+    navChapters = found.chapters.map(renderChapterItem).join("");
+  }
 
   const dupGroups = found.chapters.filter((c) => c.dups && c.dups.length).map((c) => [c.folder, ...c.dups]);
   const dupHtml = dupGroups.length
@@ -345,7 +428,11 @@ function buildSubject(found) {
           <span class="subject-name" title="${esc(name)}">${esc(name)}</span>
           <button class="dots w-only" data-menu="subject" aria-label="Subject options">⋯</button>
         </div>
-        <nav class="chapters" aria-label="Chapters">${chapters || `<p class="empty-note" style="padding:10px">No chapters yet.</p>`}</nav>
+        <nav class="chapters" aria-label="Chapters">${navChapters || `<p class="empty-note" style="padding:10px">No chapters yet.</p>`}</nav>
+        <div class="sidebar-add-bar w-only">
+          <button type="button" class="sidebar-add-btn" id="sb-add-section" title="Insert new section">+ Section</button>
+          <button type="button" class="sidebar-add-btn" id="sb-add-chapter" title="Insert new chapter">+ Chapter</button>
+        </div>
         ${modeSwitch()}
       </aside>
       <div class="backdrop" id="backdrop"></div>
@@ -906,15 +993,91 @@ function forgetSubjectState(name, moveTo) {
 }
 
 function addSubjectDialog() {
-  dialog({
-    title: "New subject",
-    sub: "Give the subject a name. You can add chapters to it next.",
-    input: { label: "Subject name", placeholder: "e.g. Operating Systems", validate: nameValidator(otherSubjects()) },
-    confirm: "Create subject",
-    onSubmit: async (name) => {
+  const existingCats = NotesData.listCategories ? NotesData.listCategories() : [];
+  const wrap = openModal(`
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
+      <h2 id="m-title">New Subject</h2>
+      <p class="modal-sub">Give the subject a name and an optional category. You can add chapters or sections to it next.</p>
+      <label class="field"><span>Subject name</span>
+        <input name="name" placeholder="e.g. Operating Systems" maxlength="120" spellcheck="false" required />
+      </label>
+      <label class="field"><span>Category (optional)</span>
+        <input name="category" placeholder="e.g. Computer Science, Mathematics" list="cat-suggestions" maxlength="80" spellcheck="false" />
+        <datalist id="cat-suggestions">
+          ${existingCats.map((c) => `<option value="${esc(c)}">`).join("")}
+        </datalist>
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn primary">Create subject</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const nameField = form.elements.name;
+  const catField = form.elements.category;
+  const err = form.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  const validate = nameValidator(otherSubjects());
+  let busy = false;
+
+  const check = () => {
+    const msg = validate(nameField.value);
+    err.textContent = msg.trim();
+    submit.disabled = !!msg;
+  };
+
+  nameField.addEventListener("input", check);
+  nameField.focus();
+  check();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy || submit.disabled) return;
+    busy = true;
+    submit.disabled = true;
+    submit.textContent = "Working…";
+    const name = NotesWrite.cleanName(nameField.value);
+    const cat = (catField.value || "").trim();
+    try {
       await applyOp(await NotesWrite.run("addSubject", { name }));
+      if (cat && NotesData.setSubjectCategory) {
+        NotesData.setSubjectCategory(name, cat);
+      }
+      closeModal();
       toast("Subject created");
       location.hash = `#/subject/${encodeURIComponent(name)}`;
+    } catch (ex) {
+      err.textContent = ex.message || "Something went wrong.";
+      submit.disabled = false;
+      submit.textContent = "Create subject";
+      busy = false;
+    }
+  });
+}
+
+function setSubjectCategoryDialog() {
+  const current = (subj && (subj.category || NotesData.getSubjectCategory(subj.name))) || "";
+  dialog({
+    title: "Set Subject Category",
+    sub: `Assign <b>${esc(subj.name)}</b> to a category section on the home screen. Leave blank for Uncategorized.`,
+    input: {
+      label: "Category name",
+      value: current,
+      placeholder: "e.g. Computer Science, Mathematics, Projects",
+      validate: () => "",
+    },
+    confirm: "Save Category",
+    onSubmit: async (cat) => {
+      const cleanCat = (cat || "").trim();
+      NotesData.setSubjectCategory(subj.name, cleanCat);
+      subj.category = cleanCat;
+      toast(`Category updated to ${cleanCat ? `"${cleanCat}"` : "Uncategorized"}`);
+      if (DATA) {
+        const found = DATA.subjects.find((s) => s.name === subj.name);
+        if (found) found.category = cleanCat;
+      }
     },
   });
 }
@@ -1030,19 +1193,139 @@ async function showSubjectAfterSave({ topicId, openNum }) {
   }
 }
 
-function addChapterDialog() {
+function addSectionDialog() {
   const subjectName = subj.name;
   dialog({
-    title: "Insert new chapter",
-    sub: `Give the chapter a name. Its number is chosen automatically (the first chapter is <b>00</b>, then one more than the highest existing number).`,
-    input: { label: "Chapter name", placeholder: "e.g. Introduction", validate: nameValidator([]) },
-    confirm: "Create chapter",
-    onSubmit: async (name) => {
-      const result = await NotesWrite.run("addChapter", { subject: subjectName, name });
-      await applyOp(result);
-      toast(`Chapter ${pad(result.num)} created`);
-      await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
+    title: "Insert New Section",
+    sub: `Create a section (e.g. <b>Section 01 - Foundations</b>) to group related chapters together.`,
+    input: {
+      label: "Section name",
+      placeholder: "e.g. Foundations, Advanced Concepts",
+      validate: nameValidator([]),
     },
+    confirm: "Create Section",
+    onSubmit: async (name) => {
+      const result = await NotesWrite.run("addSection", { subject: subjectName, name });
+      await applyOp(result);
+      toast(`Section ${pad(result.num)} created`);
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum: null });
+    },
+  });
+}
+
+function renameSectionDialog(folder) {
+  const sec = subj && subj.sections && subj.sections.find((s) => s.folder === folder);
+  if (!sec) { toast("That section is no longer available. Reload the page."); return; }
+  const subjectName = subj.name;
+  dialog({
+    title: "Rename Section",
+    sub: `Change the name of <b>Section ${pad(sec.num)} - ${esc(sec.name)}</b>.`,
+    input: { label: "Section name", value: sec.name, validate: nameValidator([], sec.name) },
+    confirm: "Rename",
+    onSubmit: async (name) => {
+      await applyOp(await NotesWrite.run("renameSection", { subject: subjectName, folder, name }));
+      toast("Section renamed");
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum: null });
+    },
+  });
+}
+
+function deleteSectionDialog(folder) {
+  const sec = subj && subj.sections && subj.sections.find((s) => s.folder === folder);
+  if (!sec) { toast("That section is no longer available. Reload the page."); return; }
+  const subjectName = subj.name;
+  dialog({
+    title: "Delete Section",
+    sub: `<b>Section ${pad(sec.num)} - ${esc(sec.name)}</b> and all chapters inside it will be removed.`,
+    confirm: "Delete Section",
+    danger: true,
+    onSubmit: async () => {
+      await applyOp(await NotesWrite.run("deleteSection", { subject: subjectName, folder }));
+      toast("Section deleted");
+      await showSubjectAfterSave({ topicId: null, openNum: null });
+    },
+  });
+}
+
+function addChapterDialog(targetSectionFolder = null) {
+  const subjectName = subj.name;
+  const hasSections = subj.hasSections && subj.sections && subj.sections.length > 0;
+
+  if (!hasSections) {
+    dialog({
+      title: "Insert new chapter",
+      sub: `Give the chapter a name. Its number is chosen automatically (the first chapter is <b>00</b>, then one more than the highest existing number).`,
+      input: { label: "Chapter name", placeholder: "e.g. Introduction", validate: nameValidator([]) },
+      confirm: "Create chapter",
+      onSubmit: async (name) => {
+        const result = await NotesWrite.run("addChapter", { subject: subjectName, name });
+        await applyOp(result);
+        toast(`Chapter ${pad(result.num)} created`);
+        await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
+      },
+    });
+    return;
+  }
+
+  // Sectioned subject: chapters must be added into a section
+  const sections = subj.sections;
+  const wrap = openModal(`
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
+      <h2 id="m-title">Insert New Chapter</h2>
+      <p class="modal-sub">Give the chapter a name and select which section it belongs to.</p>
+      <label class="field"><span>Chapter name</span>
+        <input name="name" placeholder="e.g. Introduction" maxlength="120" spellcheck="false" required />
+      </label>
+      <label class="field"><span>Target section</span>
+        <select name="sectionFolder" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font:inherit;">
+          ${sections.map((sec) => `<option value="${esc(sec.folder)}"${sec.folder === targetSectionFolder ? " selected" : ""}>Section ${pad(sec.num)} - ${esc(sec.name)}</option>`).join("")}
+        </select>
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn primary">Create chapter</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const nameField = form.elements.name;
+  const secSelect = form.elements.sectionFolder;
+  const err = form.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  const validate = nameValidator([]);
+  let busy = false;
+
+  const check = () => {
+    const msg = validate(nameField.value);
+    err.textContent = msg.trim();
+    submit.disabled = !!msg;
+  };
+
+  nameField.addEventListener("input", check);
+  nameField.focus();
+  check();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy || submit.disabled) return;
+    busy = true;
+    submit.disabled = true;
+    submit.textContent = "Working…";
+    const name = NotesWrite.cleanName(nameField.value);
+    const sectionFolder = secSelect.value;
+    try {
+      const result = await NotesWrite.run("addChapter", { subject: subjectName, name, sectionFolder });
+      await applyOp(result);
+      closeModal();
+      toast(`Chapter ${pad(result.num)} created in section`);
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
+    } catch (ex) {
+      err.textContent = ex.message || "Something went wrong.";
+      submit.disabled = false;
+      submit.textContent = "Create chapter";
+      busy = false;
+    }
   });
 }
 
@@ -1244,7 +1527,12 @@ const ACTIONS = {
   "topic:delete": deleteTopicDialog,
   "subject:rename": renameSubjectDialog,
   "subject:delete": deleteSubjectDialog,
-  "chapter:add": addChapterDialog,
+  "subject:category": setSubjectCategoryDialog,
+  "section:add": addSectionDialog,
+  "section:add-chapter": (folder) => addChapterDialog(folder),
+  "section:rename": (folder) => renameSectionDialog(folder),
+  "section:delete": (folder) => deleteSectionDialog(folder),
+  "chapter:add": () => addChapterDialog(),
   "chapter:rename": renameChapterDialog,
   "chapter:number": changeChapterNumberDialog,
   "chapter:up": (folder) => moveChapterAction(folder, "up"),
@@ -1654,6 +1942,19 @@ document.addEventListener("click", (e) => {
 
   const chapterBtn = t.closest(".chapter-btn");
   if (chapterBtn) { toggleChapter(chapterBtn.closest(".chapter")); return; }
+
+  const sectionBtn = t.closest(".section-btn");
+  if (sectionBtn) {
+    const secBlock = sectionBtn.closest(".section-block");
+    if (secBlock) {
+      const isOpen = secBlock.classList.toggle("open");
+      sectionBtn.setAttribute("aria-expanded", String(isOpen));
+    }
+    return;
+  }
+
+  if (t.closest("#sb-add-section")) { addSectionDialog(); return; }
+  if (t.closest("#sb-add-chapter")) { addChapterDialog(); return; }
 
   if (t.closest("#open-index, #mb-pending")) { setDrawer(true); return; }
   if (t.closest("#backdrop")) { setDrawer(false); return; }

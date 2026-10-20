@@ -557,39 +557,87 @@
     if (!root) return;
     root.querySelectorAll(".blk").forEach((blkWrap) => {
       const box = blkWrap.querySelector(".mermaid-box");
-      if (!box || blkWrap.querySelector(".mermaid-action-strip")) return;
+      if (!box || box.querySelector(".cell-dots-btn")) return;
 
-      const strip = document.createElement("div");
-      strip.className = "mermaid-action-strip w-only";
-      strip.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 8px;
-        padding: 4px 8px;
-        background: #15151a;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        width: fit-content;
-        font-size: 12px;
-      `;
-      strip.innerHTML = `
-        <span style="font-weight:600;color:var(--accent);margin-right:4px;">📊 Diagram:</span>
-        <button type="button" class="btn" data-act="visual" style="padding:2px 8px;font-size:12px;">Visual Studio / Edit</button>
+      box.classList.add("cell-action-wrap");
+
+      const dotsBtn = document.createElement("button");
+      dotsBtn.type = "button";
+      dotsBtn.className = "cell-dots-btn w-only";
+      dotsBtn.innerHTML = "&#8942;";
+      dotsBtn.title = "Diagram options";
+      dotsBtn.setAttribute("aria-label", "Diagram options");
+
+      const popover = document.createElement("div");
+      popover.className = "cell-popover-menu w-only";
+      popover.style.display = "none";
+      popover.innerHTML = `
+        <button type="button" data-act="visual"><span style="margin-right:6px">📊</span>Visual Studio / Edit</button>
+        <button type="button" data-act="copy-svg"><span style="margin-right:6px">📋</span>Copy SVG</button>
+        <button type="button" data-act="copy-code"><span style="margin-right:6px">📋</span>Copy Code</button>
       `;
 
-      strip.addEventListener("click", (e) => {
-        const btn = e.target.closest("button[data-act='visual']");
+      box.appendChild(dotsBtn);
+      box.appendChild(popover);
+
+      const closeMenu = () => {
+        popover.style.display = "none";
+        dotsBtn.classList.remove("active");
+      };
+
+      dotsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isOpen = popover.style.display === "flex";
+        if (isOpen) {
+          closeMenu();
+        } else {
+          popover.style.display = "flex";
+          dotsBtn.classList.add("active");
+        }
+      });
+
+      box.addEventListener("mouseleave", () => {
+        closeMenu();
+      });
+      box.addEventListener("focusout", (e) => {
+        if (!box.contains(e.relatedTarget)) {
+          closeMenu();
+        }
+      });
+
+      popover.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-act]");
         if (!btn) return;
         e.stopPropagation();
         e.preventDefault();
-        const currentText = getBlockText(blkWrap);
-        openMermaidDialog((newText) => {
-          updateBlockText(blkWrap, newText);
-        }, currentText);
-      });
+        const act = btn.dataset.act;
+        closeMenu();
 
-      box.parentNode.insertBefore(strip, box);
+        const currentText = getBlockText(blkWrap);
+        if (act === "visual") {
+          openMermaidDialog((newText) => {
+            updateBlockText(blkWrap, newText);
+          }, currentText);
+        } else if (act === "copy-svg") {
+          const svg = box.querySelector("svg");
+          if (svg) {
+            try {
+              await navigator.clipboard.writeText(svg.outerHTML);
+              if (global.toast) global.toast("SVG copied to clipboard");
+            } catch {
+              if (global.toast) global.toast("Could not copy SVG");
+            }
+          }
+        } else if (act === "copy-code") {
+          try {
+            await navigator.clipboard.writeText(currentText);
+            if (global.toast) global.toast("Diagram code copied to clipboard");
+          } catch {
+            if (global.toast) global.toast("Could not copy code");
+          }
+        }
+      });
     });
   }
 
