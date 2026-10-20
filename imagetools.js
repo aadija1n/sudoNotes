@@ -371,8 +371,7 @@
       dotsBtn.setAttribute("aria-label", "Image options");
 
       const popover = document.createElement("div");
-      popover.className = "cell-popover-menu w-only";
-      popover.style.display = "none";
+      popover.className = "cell-popover-menu";
       popover.innerHTML = `
         <button type="button" data-act="zoom-in"><span style="margin-right:6px">➕</span>Zoom In (+10%)</button>
         <button type="button" data-act="zoom-out"><span style="margin-right:6px">➖</span>Zoom Out (-10%)</button>
@@ -385,18 +384,21 @@
       wrap.appendChild(popover);
 
       const closeMenu = () => {
-        popover.style.display = "none";
+        popover.classList.remove("open");
         dotsBtn.classList.remove("active");
       };
 
       dotsBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const isOpen = popover.style.display === "flex";
-        if (isOpen) {
-          closeMenu();
-        } else {
-          popover.style.display = "flex";
+        const willOpen = !popover.classList.contains("open");
+        document.querySelectorAll(".cell-popover-menu.open").forEach((p) => {
+          p.classList.remove("open");
+          const b = p.closest(".cell-action-wrap")?.querySelector(".cell-dots-btn");
+          if (b) b.classList.remove("active");
+        });
+        if (willOpen) {
+          popover.classList.add("open");
           dotsBtn.classList.add("active");
         }
       });

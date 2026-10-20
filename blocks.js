@@ -348,7 +348,7 @@
     root.addEventListener("click", (e) => {
       const wrap = e.target.closest(".blk");
       const onSlot = e.target.closest(".blk-add");
-      if (e.target.closest(".copy-btn") || e.target.closest(".blk-handle")) return;
+      if (e.target.closest(".copy-btn") || e.target.closest(".blk-handle") || e.target.closest(".cell-dots-btn") || e.target.closest(".cell-popover-menu")) return;
       if (wrap && !wrap.classList.contains("editing")) e.preventDefault(); // links/summaries must not act while editing
       if (locked || Date.now() < ignoreClickUntil) return;
       if (onSlot) { if (!ed) newBlockEdit(); return; }

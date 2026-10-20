@@ -649,6 +649,38 @@
       },
     },
 
+    /* Moves a chapter folder (and all topic files inside it) from root to a section,
+       from a section to another section, or from a section back to root (unsectioned). */
+    moveChapterSection: {
+      label: (a) => `Move chapter to ${a.targetSectionFolder ? `section ${a.targetSectionFolder}` : "root"}: ${a.folder} (${a.subject})`,
+      plan(entries, a, out) {
+        const { chapter } = findChapter(entries, a.subject, a.folder);
+        const oldSec = chapter.sectionFolder || null;
+        const targetSec = a.targetSectionFolder || null;
+        if (oldSec === targetSec) {
+          throw fail("invalid", "The chapter is already in that section.");
+        }
+        const oldSecPrefix = oldSec ? `${oldSec}/` : "";
+        const targetSecPrefix = targetSec ? `${targetSec}/` : "";
+        const from = `${D.root}/${a.subject}/${oldSecPrefix}${a.folder}/`;
+        const to = `${D.root}/${a.subject}/${targetSecPrefix}${a.folder}/`;
+        const files = blobsUnder(entries, from.slice(0, -1));
+        if (!files.length) {
+          throw fail("missing", "No files found in chapter folder.");
+        }
+        const destFiles = blobsUnder(entries, to.slice(0, -1));
+        if (destFiles.length) {
+          throw fail("invalid", "A chapter with that name already exists in the destination section.");
+        }
+        out.folder = a.folder;
+        out.num = chapter.num;
+        out.oldSectionFolder = oldSec;
+        out.sectionFolder = targetSec;
+        const changes = files.flatMap((e) => [removal(e), moved(e, to + e.path.slice(from.length))]);
+        return keepSubjectAlive(entries, a.subject, changes);
+      },
+    },
+
     /* ---------- topics (Phase 8B) ---------- */
 
     /* Index = highest index in the chapter + 1 (first topic is N.1). Never reuses an index. The file starts empty. */
@@ -796,10 +828,11 @@
   const changeChapterNumber = (subject, folder, newNum) => immediate("changeChapterNumber", { subject, folder, newNum });
   const deleteChapter = (subject, folder) => immediate("deleteChapter", { subject, folder });
   const moveChapter = (subject, folder, dir) => immediate("moveChapter", { subject, folder, dir });
+  const moveChapterSection = (subject, folder, targetSectionFolder) => immediate("moveChapterSection", { subject, folder, targetSectionFolder });
 
   global.NotesWrite = {
     cleanName, validateName, addSubject, renameSubject, deleteSubject,
-    addChapter, renameChapter, changeChapterNumber, deleteChapter, moveChapter,
+    addChapter, renameChapter, changeChapterNumber, deleteChapter, moveChapter, moveChapterSection,
     run, duplicateGroups, duplicateMessage, topicDuplicateMessage,
     getWriteRepo, verifyNotesRepo, saveConfig, parseRepoInput,
     setGuard(fn) { guard = fn; },

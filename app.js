@@ -22,6 +22,7 @@ const MENUS = {
     ["Change chapter number", 0, "", "chapter:number"],
     ["Move up", 0, "", "chapter:up"],
     ["Move down", 0, "", "chapter:down"],
+    ["Move to section…", 0, "", "chapter:move-section"],
     ["Delete chapter", 0, "danger", "chapter:delete"],
   ],
   topic: [
@@ -1267,7 +1268,7 @@ function addChapterDialog(targetSectionFolder = null) {
     return;
   }
 
-  // Sectioned subject: chapters must be added into a section
+  // Sectioned subject: chapters can be added into a section or to root
   const sections = subj.sections;
   const wrap = openModal(`
     <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
@@ -1278,7 +1279,9 @@ function addChapterDialog(targetSectionFolder = null) {
       </label>
       <label class="field"><span>Target section</span>
         <select name="sectionFolder" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font:inherit;">
+          ${targetSectionFolder ? "" : '<option value="">None (Root / Unsectioned)</option>'}
           ${sections.map((sec) => `<option value="${esc(sec.folder)}"${sec.folder === targetSectionFolder ? " selected" : ""}>Section ${pad(sec.num)} - ${esc(sec.name)}</option>`).join("")}
+          ${targetSectionFolder ? '<option value="">None (Root / Unsectioned)</option>' : ""}
         </select>
       </label>
       <p class="form-error" role="alert"></p>
@@ -1313,12 +1316,12 @@ function addChapterDialog(targetSectionFolder = null) {
     submit.disabled = true;
     submit.textContent = "Working…";
     const name = NotesWrite.cleanName(nameField.value);
-    const sectionFolder = secSelect.value;
+    const sectionFolder = secSelect.value.trim() || null;
     try {
       const result = await NotesWrite.run("addChapter", { subject: subjectName, name, sectionFolder });
       await applyOp(result);
       closeModal();
-      toast(`Chapter ${pad(result.num)} created in section`);
+      toast(`Chapter ${pad(result.num)} created${sectionFolder ? " in section" : ""}`);
       await showSubjectAfterSave({ topicId: currentTopicId, openNum: result.num });
     } catch (ex) {
       err.textContent = ex.message || "Something went wrong.";
@@ -1417,6 +1420,69 @@ async function moveChapterAction(folder, dir) {
   remapLastTopic(subjectName, map);
   toast(`Chapter moved ${dir}`);
   await showSubjectAfterSave({ topicId: remapId(currentTopicId, map), openNum: remapNum(openNum, map) });
+}
+
+function moveChapterSectionDialog(folder) {
+  const ch = chapterByFolder(folder);
+  if (!ch) { toast("That chapter is not in the list any more. Reload the page."); return; }
+  const subjectName = subj.name;
+  const sections = (subj && subj.sections) || [];
+  const currentSecFolder = ch.sectionFolder || "";
+
+  const wrap = openModal(`
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title" autocomplete="off">
+      <h2 id="m-title">Move Chapter to Section</h2>
+      <p class="modal-sub">Move <b>${chapterLabel(ch)}</b> to another section or back to root.</p>
+      <label class="field"><span>Target section</span>
+        <select name="targetSectionFolder" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font:inherit;">
+          <option value=""${!currentSecFolder ? " selected" : ""}>None (Root / Unsectioned)</option>
+          ${sections.map((sec) => `<option value="${esc(sec.folder)}"${sec.folder === currentSecFolder ? " selected" : ""}>Section ${pad(sec.num)} - ${esc(sec.name)}</option>`).join("")}
+        </select>
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="submit" class="btn primary">Move Chapter</button>
+      </div>
+    </form>`);
+
+  const form = wrap.querySelector("form");
+  const targetSelect = form.elements.targetSectionFolder;
+  const err = form.querySelector(".form-error");
+  const submit = form.querySelector('[type="submit"]');
+  let busy = false;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const targetSectionFolder = targetSelect.value.trim() || null;
+    if (targetSectionFolder === (ch.sectionFolder || null)) {
+      err.textContent = "The chapter is already in that section.";
+      return;
+    }
+    busy = true;
+    submit.disabled = true;
+    submit.textContent = "Moving…";
+    try {
+      const result = await NotesWrite.run("moveChapterSection", {
+        subject: subjectName,
+        folder: ch.folder,
+        targetSectionFolder,
+      });
+      await applyOp(result);
+      closeModal();
+      const secName = targetSectionFolder
+        ? (sections.find((s) => s.folder === targetSectionFolder)?.name || targetSectionFolder)
+        : "Root";
+      toast(`Chapter moved to ${secName}`);
+      await showSubjectAfterSave({ topicId: currentTopicId, openNum: ch.num });
+    } catch (ex) {
+      err.textContent = ex.message || "Something went wrong.";
+      submit.disabled = false;
+      submit.textContent = "Move Chapter";
+      busy = false;
+    }
+  });
 }
 
 /* ---------- topics ---------- */
@@ -1537,6 +1603,7 @@ const ACTIONS = {
   "chapter:number": changeChapterNumberDialog,
   "chapter:up": (folder) => moveChapterAction(folder, "up"),
   "chapter:down": (folder) => moveChapterAction(folder, "down"),
+  "chapter:move-section": moveChapterSectionDialog,
   "chapter:delete": deleteChapterDialog,
 };
 
@@ -1866,8 +1933,20 @@ function offerRestore() {
 }
 
 /* ---------- events (delegated) ---------- */
+function closeCellPopovers() {
+  document.querySelectorAll(".cell-popover-menu.open").forEach((p) => {
+    p.classList.remove("open");
+    const b = p.closest(".cell-action-wrap")?.querySelector(".cell-dots-btn");
+    if (b) b.classList.remove("active");
+  });
+}
+
 document.addEventListener("click", (e) => {
   const t = e.target;
+
+  if (!t.closest(".cell-action-wrap")) {
+    closeCellPopovers();
+  }
 
   const menuItem = t.closest(".menu button");
   if (menuItem && !menuItem.closest(".blk-menu")) {
@@ -1962,7 +2041,7 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMenu(); closeModal(); setDrawer(false); }
+  if (e.key === "Escape") { closeMenu(); closeModal(); setDrawer(false); closeCellPopovers(); }
 });
 
 NotesData.setTokenProvider(() => Auth.getToken());

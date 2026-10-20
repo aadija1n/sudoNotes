@@ -276,7 +276,7 @@
   width: 28px !important;
   height: 28px !important;
   padding: 0 !important;
-  display: inline-flex !important;
+  display: none !important;
   align-items: center !important;
   justify-content: center !important;
   background: rgba(20, 20, 26, 0.88) !important;
@@ -295,9 +295,12 @@
   transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
 }
-.cell-action-wrap:hover .cell-dots-btn,
-.cell-action-wrap:focus-within .cell-dots-btn,
-.cell-dots-btn.active {
+body.write .cell-dots-btn {
+  display: inline-flex !important;
+}
+body.write .cell-action-wrap:hover .cell-dots-btn,
+body.write .cell-action-wrap:focus-within .cell-dots-btn,
+body.write .cell-dots-btn.active {
   opacity: 1 !important;
   pointer-events: auto !important;
 }
@@ -306,6 +309,8 @@
   color: var(--text) !important;
   border-color: var(--accent) !important;
 }
+body .cell-popover-menu,
+body.write .cell-popover-menu,
 .cell-popover-menu {
   position: absolute !important;
   top: 38px !important;
@@ -317,10 +322,15 @@
   border-radius: 8px !important;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65) !important;
   padding: 6px !important;
-  display: flex !important;
+  display: none !important;
   flex-direction: column !important;
   gap: 3px !important;
   animation: toast-in 0.12s ease !important;
+}
+body .cell-popover-menu.open,
+body.write .cell-popover-menu.open,
+.cell-popover-menu.open {
+  display: flex !important;
 }
 .cell-popover-menu button {
   display: flex !important;
@@ -344,4 +354,5 @@
   background: rgba(255, 255, 255, 0.08) !important;
   color: var(--accent) !important;
 }
+
 
